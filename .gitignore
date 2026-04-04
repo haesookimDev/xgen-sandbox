@@ -9,3 +9,6 @@ node_modules/
 .env.local
 *.log
 .DS_Store
+
+**/rust/target/
+**/__pycache__/**
