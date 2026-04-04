@@ -9,6 +9,7 @@ import type {
   ExecEvent,
   TerminalOptions,
   FileInfo,
+  FileEvent,
   Disposable,
 } from "./types.js";
 
@@ -245,6 +246,60 @@ export class Sandbox {
     const ws = await this.ensureWs();
     const payload = encodePayload({ path, recursive });
     await ws.request(MsgType.FsRemove, 0, payload);
+  }
+
+  /**
+   * Watch a path for file changes.
+   * Returns a Disposable to stop watching.
+   */
+  watchFiles(path: string, callback: (event: FileEvent) => void): Disposable {
+    let disposed = false;
+    let eventCleanup: (() => void) | null = null;
+    let wsRef: WsTransport | null = null;
+
+    this.ensureWs().then((ws) => {
+      if (disposed) return;
+      wsRef = ws;
+
+      // Listen for file events
+      eventCleanup = ws.on(MsgType.FsEvent, (env) => {
+        const event = decodePayload<FileEvent>(env.payload);
+        callback(event);
+      });
+
+      // Send watch request
+      const payload = encodePayload({ path });
+      ws.send({
+        type: MsgType.FsWatch,
+        channel: 0,
+        id: 0,
+        payload,
+      });
+    });
+
+    return {
+      dispose() {
+        disposed = true;
+        if (eventCleanup) {
+          eventCleanup();
+          eventCleanup = null;
+        }
+        // Send unwatch
+        if (wsRef) {
+          try {
+            const payload = encodePayload({ path, unwatch: true });
+            wsRef.send({
+              type: MsgType.FsWatch,
+              channel: 0,
+              id: 0,
+              payload,
+            });
+          } catch {
+            // Ignore
+          }
+        }
+      },
+    };
   }
 
   // --- Port events ---

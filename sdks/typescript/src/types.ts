@@ -59,6 +59,11 @@ export interface FileInfo {
   modTime: number;
 }
 
+export interface FileEvent {
+  path: string;
+  type: "created" | "modified" | "deleted";
+}
+
 export interface Disposable {
   dispose(): void;
 }

@@ -10,5 +10,6 @@ export type {
   ExecEvent,
   TerminalOptions,
   FileInfo,
+  FileEvent,
   Disposable,
 } from "./types.js";

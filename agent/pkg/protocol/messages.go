@@ -112,6 +112,18 @@ type FsRemovePayload struct {
 	Recursive bool   `msgpack:"recursive" json:"recursive"`
 }
 
+// FsWatchPayload requests watching a path for changes.
+type FsWatchPayload struct {
+	Path    string `msgpack:"path" json:"path"`
+	Unwatch bool   `msgpack:"unwatch,omitempty" json:"unwatch,omitempty"`
+}
+
+// FsEventPayload is sent when a watched file changes.
+type FsEventPayload struct {
+	Path string `msgpack:"path" json:"path"`
+	Type string `msgpack:"type" json:"type"` // created, modified, deleted
+}
+
 // PortOpenPayload is sent when a port starts listening.
 type PortOpenPayload struct {
 	Port uint16 `msgpack:"port" json:"port"`

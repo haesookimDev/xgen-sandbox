@@ -35,6 +35,8 @@ const (
 	MsgFsWrite      uint8 = 0x31
 	MsgFsList       uint8 = 0x32
 	MsgFsRemove     uint8 = 0x33
+	MsgFsWatch      uint8 = 0x34
+	MsgFsEvent      uint8 = 0x35
 	MsgPortOpen     uint8 = 0x40
 	MsgPortClose    uint8 = 0x41
 	MsgSandboxReady uint8 = 0x50
@@ -73,12 +75,13 @@ func encodeEnvelope(e *envelope) []byte {
 
 // Server is the sidecar WebSocket server that handles agent connections.
 type Server struct {
-	execMgr  *execpkg.Manager
+	execMgr   *execpkg.Manager
 	fsHandler *fspkg.Handler
-	portDet  *port.Detector
-	conn     *websocket.Conn
-	connMu   sync.Mutex
-	chanID   atomic.Uint32
+	portDet   *port.Detector
+	watcher   *fspkg.Watcher
+	conn      *websocket.Conn
+	connMu    sync.Mutex
+	chanID    atomic.Uint32
 }
 
 // NewServer creates a new sidecar WebSocket server.
@@ -114,6 +117,14 @@ func (s *Server) Handler() http.Handler {
 		)
 		s.portDet.Start()
 		defer s.portDet.Stop()
+
+		// Start file watcher
+		s.watcher = fspkg.NewWatcher("/home/sandbox/workspace", func(evt fspkg.FsEvent) {
+			payload, _ := msgpack.Marshal(evt)
+			s.sendEnvelope(&envelope{Type: MsgFsEvent, Payload: payload})
+		})
+		s.watcher.Start()
+		defer s.watcher.Stop()
 
 		// Send ready signal
 		s.sendEnvelope(&envelope{Type: MsgSandboxReady})
@@ -171,6 +182,9 @@ func (s *Server) handleMessage(ctx context.Context, env *envelope) {
 
 	case MsgFsRemove:
 		s.handleFsRemove(env)
+
+	case MsgFsWatch:
+		s.handleFsWatch(env)
 
 	default:
 		s.sendError(env.Channel, env.ID, "unknown_message", fmt.Sprintf("unknown message type: 0x%02x", env.Type))
@@ -388,6 +402,34 @@ func (s *Server) handleFsRemove(env *envelope) {
 		return
 	}
 
+	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID})
+}
+
+// --- File watch handler ---
+
+type fsWatchPayload struct {
+	Path    string `msgpack:"path"`
+	Unwatch bool   `msgpack:"unwatch,omitempty"`
+}
+
+func (s *Server) handleFsWatch(env *envelope) {
+	var payload fsWatchPayload
+	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
+		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		return
+	}
+	if s.watcher == nil {
+		s.sendError(env.Channel, env.ID, "watcher_error", "watcher not initialized")
+		return
+	}
+	if payload.Unwatch {
+		s.watcher.Unwatch(payload.Path)
+	} else {
+		if err := s.watcher.Watch(payload.Path); err != nil {
+			s.sendError(env.Channel, env.ID, "watch_error", err.Error())
+			return
+		}
+	}
 	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID})
 }
 

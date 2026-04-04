@@ -199,8 +199,7 @@ func (s *Server) handleKeepalive(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	sbx, err := s.sandboxMgr.Get(id)
-	if err != nil {
+	if _, err := s.sandboxMgr.Get(id); err != nil {
 		writeError(w, http.StatusNotFound, "sandbox not found")
 		return
 	}
@@ -211,11 +210,27 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = sbx // exec via REST uses the WebSocket proxy internally
-	// For Phase 1, we execute synchronously through the sidecar WS
-	// This is a simplified implementation; full streaming goes through the WS endpoint
+	if req.Command == "" {
+		writeError(w, http.StatusBadRequest, "command is required")
+		return
+	}
 
-	writeError(w, http.StatusNotImplemented, "use WebSocket endpoint for exec in Phase 1")
+	timeout := 30 * time.Second
+	if req.Timeout > 0 {
+		timeout = time.Duration(req.Timeout) * time.Second
+	}
+
+	result, err := s.wsProxy.ExecSync(r.Context(), id, req.Command, req.Args, req.Env, req.Cwd, timeout)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, v1.ExecResponse{
+		ExitCode: result.ExitCode,
+		Stdout:   result.Stdout,
+		Stderr:   result.Stderr,
+	})
 }
 
 // --- WebSocket ---
