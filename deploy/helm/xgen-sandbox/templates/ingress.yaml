@@ -1,0 +1,45 @@
+{{- if .Values.ingress.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: xgen-agent
+  namespace: xgen-system
+  annotations:
+    {{- if .Values.ingress.tls }}
+    cert-manager.io/cluster-issuer: {{ .Values.ingress.clusterIssuer | default "letsencrypt-prod" }}
+    {{- end }}
+spec:
+  ingressClassName: {{ .Values.ingress.className }}
+  {{- if .Values.ingress.tls }}
+  tls:
+    - hosts:
+        - {{ .Values.ingress.host }}
+      secretName: xgen-agent-tls
+    - hosts:
+        - "*.{{ .Values.ingress.previewDomain }}"
+      secretName: xgen-preview-tls
+  {{- end }}
+  rules:
+    # Agent API
+    - host: {{ .Values.ingress.host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: xgen-agent
+                port:
+                  name: http
+    # Preview wildcard routing
+    - host: "*.{{ .Values.ingress.previewDomain }}"
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: xgen-agent
+                port:
+                  name: http
+{{- end }}

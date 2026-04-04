@@ -45,3 +45,15 @@ ingress:
   className: traefik
   host: agent.example.com
   previewDomain: preview.example.com
+  tls: false
+  clusterIssuer: letsencrypt-prod
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 5
+  targetCPUUtilization: 70
+
+podDisruptionBudget:
+  enabled: false
+  minAvailable: 1

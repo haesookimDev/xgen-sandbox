@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
 	"github.com/xgen-sandbox/agent/internal/auth"
@@ -22,6 +24,7 @@ import (
 // Server is the main HTTP server for the agent.
 type Server struct {
 	cfg        *config.Config
+	logger     *slog.Logger
 	auth       *auth.Authenticator
 	sandboxMgr *sandbox.Manager
 	podMgr     *k8spkg.PodManager
@@ -33,6 +36,7 @@ type Server struct {
 // NewServer creates a new HTTP server.
 func NewServer(
 	cfg *config.Config,
+	logger *slog.Logger,
 	authenticator *auth.Authenticator,
 	sandboxMgr *sandbox.Manager,
 	podMgr *k8spkg.PodManager,
@@ -42,6 +46,7 @@ func NewServer(
 ) *Server {
 	return &Server{
 		cfg:        cfg,
+		logger:     logger,
 		auth:       authenticator,
 		sandboxMgr: sandboxMgr,
 		podMgr:     podMgr,
@@ -55,22 +60,26 @@ func NewServer(
 func (s *Server) Handler() http.Handler {
 	r := chi.NewRouter()
 
-	r.Use(middleware.Logger)
+	r.Use(structuredLogger(s.logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
+	r.Use(metricsMiddleware)
 
-	// Health check (no auth)
+	// Health check and metrics (no auth)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte("ok"))
 	})
+	r.Handle("/metrics", promhttp.Handler())
 
 	// Auth endpoint (no auth required)
 	r.Post("/api/v1/auth/token", s.handleAuthToken)
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
+		r.Use(RateLimitMiddleware(120)) // 120 requests/min per client
 		r.Use(s.auth.Middleware)
+		r.Use(auditLog(s.logger))
 
 		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
 			Post("/api/v1/sandboxes", s.handleCreateSandbox)
@@ -136,6 +145,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sbx := s.sandboxMgr.Create(req.Template, timeout, req.Ports, req.GUI, req.Env, req.Metadata)
+	sandboxCreateTotal.Inc()
+	sandboxesActive.Inc()
 
 	// Try warm pool first, fall back to creating a new pod
 	if warmID := s.warmPool.Claim(req.Template); warmID != "" {
@@ -210,6 +221,8 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	s.wsProxy.DisconnectSidecar(id)
 	s.sandboxMgr.SetStatus(id, v1.StatusStopped)
 	s.sandboxMgr.Remove(id)
+	sandboxDeleteTotal.Inc()
+	sandboxesActive.Dec()
 
 	w.WriteHeader(http.StatusNoContent)
 }

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -20,6 +21,10 @@ import (
 )
 
 func main() {
+	// Initialize structured logging
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: slog.LevelInfo}))
+	slog.SetDefault(logger)
+
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	log.Println("xgen-sandbox agent starting...")
 
@@ -124,7 +129,7 @@ func main() {
 	// Start warm pool
 	warmPool.Start(ctx)
 
-	srv := server.NewServer(cfg, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, previewRouter)
+	srv := server.NewServer(cfg, logger, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, previewRouter)
 
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,
