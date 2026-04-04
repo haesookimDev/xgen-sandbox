@@ -1,0 +1,18 @@
+[package]
+name = "xgen-sandbox"
+version = "0.1.0"
+edition = "2021"
+description = "Rust SDK for xgen-sandbox"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", features = ["json"] }
+tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
+futures-util = "0.3"
+rmp-serde = "1"
+serde = { version = "1", features = ["derive"] }
+serde_bytes = "0.11"
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2"
+url = "2"
