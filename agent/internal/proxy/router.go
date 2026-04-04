@@ -2,7 +2,9 @@ package proxy
 
 import (
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -61,6 +63,13 @@ func (r *Router) Handler() http.Handler {
 		}
 
 		target, _ := url.Parse(fmt.Sprintf("http://%s:%s", sbx.PodIP, port))
+
+		// WebSocket upgrade requests need raw TCP proxying
+		if isWebSocketUpgrade(req) {
+			proxyWebSocket(w, req, target)
+			return
+		}
+
 		proxy := httputil.NewSingleHostReverseProxy(target)
 		proxy.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 			log.Printf("proxy error for sandbox %s: %v", sandboxID, err)
@@ -92,4 +101,48 @@ func parseSubdomain(subdomain string) (sandboxID string, port string, err error)
 	sandboxID = rest[:lastDash]
 	port = rest[lastDash+1:]
 	return sandboxID, port, nil
+}
+
+// isWebSocketUpgrade checks if the request is a WebSocket upgrade.
+func isWebSocketUpgrade(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket")
+}
+
+// proxyWebSocket proxies a WebSocket upgrade request via raw TCP tunneling.
+func proxyWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL) {
+	backend, err := net.Dial("tcp", target.Host)
+	if err != nil {
+		log.Printf("ws proxy: dial backend %s: %v", target.Host, err)
+		http.Error(w, "backend unavailable", http.StatusBadGateway)
+		return
+	}
+	defer backend.Close()
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		http.Error(w, "hijacking not supported", http.StatusInternalServerError)
+		return
+	}
+
+	// Forward the original request to the backend
+	r.URL = target
+	r.Host = target.Host
+	if err := r.Write(backend); err != nil {
+		log.Printf("ws proxy: write request to backend: %v", err)
+		http.Error(w, "backend write error", http.StatusBadGateway)
+		return
+	}
+
+	client, _, err := hijacker.Hijack()
+	if err != nil {
+		log.Printf("ws proxy: hijack: %v", err)
+		return
+	}
+	defer client.Close()
+
+	// Bidirectional copy
+	done := make(chan struct{}, 2)
+	go func() { io.Copy(backend, client); done <- struct{}{} }()
+	go func() { io.Copy(client, backend); done <- struct{}{} }()
+	<-done
 }

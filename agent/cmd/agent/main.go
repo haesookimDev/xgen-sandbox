@@ -88,18 +88,31 @@ func main() {
 
 	// Start sandbox expiry checker
 	go func() {
-		ticker := time.NewTicker(30 * time.Second)
+		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
+		pendingDeletes := make(map[string]time.Time)
 		for {
 			select {
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				// Retry force-delete for pods stuck past grace period
+				for id, deletedAt := range pendingDeletes {
+					if time.Since(deletedAt) > 30*time.Second {
+						log.Printf("sandbox %s still pending after 30s, force deleting", id)
+						if err := podMgr.ForceDeletePod(ctx, id); err != nil {
+							log.Printf("force delete pod %s: %v", id, err)
+						}
+						delete(pendingDeletes, id)
+					}
+				}
+
 				for _, id := range sandboxMgr.GetExpired() {
 					log.Printf("sandbox %s expired, cleaning up", id)
 					sandboxMgr.SetStatus(id, v1.StatusStopping)
 					if err := podMgr.DeletePod(ctx, id); err != nil {
 						log.Printf("delete expired pod %s: %v", id, err)
+						pendingDeletes[id] = time.Now()
 					}
 					wsProxy.DisconnectSidecar(id)
 					sandboxMgr.Remove(id)

@@ -148,6 +148,13 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 
+	restrictedSC := &corev1.SecurityContext{
+		AllowPrivilegeEscalation: boolPtr(false),
+		Capabilities: &corev1.Capabilities{
+			Drop: []corev1.Capability{"ALL"},
+		},
+	}
+
 	containers := []corev1.Container{
 		{
 			Name:  "sidecar",
@@ -166,6 +173,13 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 					corev1.ResourceMemory: resource.MustParse("64Mi"),
 				},
 			},
+			SecurityContext: &corev1.SecurityContext{
+				AllowPrivilegeEscalation: boolPtr(false),
+				ReadOnlyRootFilesystem:   boolPtr(true),
+				Capabilities: &corev1.Capabilities{
+					Drop: []corev1.Capability{"ALL"},
+				},
+			},
 			ReadinessProbe: &corev1.Probe{
 				ProbeHandler: corev1.ProbeHandler{
 					HTTPGet: &corev1.HTTPGetAction{
@@ -181,10 +195,11 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			},
 		},
 		{
-			Name:  "runtime",
-			Image: runtimeImage,
-			Command: []string{"sleep", "infinity"},
-			Env:   envVars,
+			Name:            "runtime",
+			Image:           runtimeImage,
+			Command:         []string{"sleep", "infinity"},
+			Env:             envVars,
+			SecurityContext: restrictedSC,
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
 					corev1.ResourceCPU:    resource.MustParse("250m"),
@@ -204,8 +219,9 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	// Add VNC container if GUI is requested
 	if gui {
 		containers = append(containers, corev1.Container{
-			Name:  "vnc",
-			Image: "ghcr.io/xgen-sandbox/novnc:latest",
+			Name:            "vnc",
+			Image:           "ghcr.io/xgen-sandbox/novnc:latest",
+			SecurityContext: restrictedSC,
 			Ports: []corev1.ContainerPort{
 				{Name: "novnc", ContainerPort: 6080},
 			},
@@ -226,6 +242,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	}
 
 	shareProcessNamespace := true
+	sandboxUser := int64(1000)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sbx-" + sandboxID,
@@ -237,9 +254,18 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			},
 		},
 		Spec: corev1.PodSpec{
-			ShareProcessNamespace: &shareProcessNamespace,
-			RestartPolicy:         corev1.RestartPolicyNever,
+			ShareProcessNamespace:        &shareProcessNamespace,
+			RestartPolicy:                corev1.RestartPolicyNever,
 			AutomountServiceAccountToken: boolPtr(false),
+			SecurityContext: &corev1.PodSecurityContext{
+				RunAsNonRoot: boolPtr(true),
+				RunAsUser:    &sandboxUser,
+				RunAsGroup:   &sandboxUser,
+				FSGroup:      &sandboxUser,
+				SeccompProfile: &corev1.SeccompProfile{
+					Type: corev1.SeccompProfileTypeRuntimeDefault,
+				},
+			},
 			Containers: containers,
 			Volumes: []corev1.Volume{
 				{
@@ -262,7 +288,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	return nil
 }
 
-// DeletePod deletes a sandbox pod.
+// DeletePod deletes a sandbox pod with a 10-second grace period.
 func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 	podName := "sbx-" + sandboxID
 	gracePeriod := int64(10)
@@ -271,6 +297,24 @@ func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 	})
 	if err != nil {
 		return fmt.Errorf("delete pod: %w", err)
+	}
+
+	pm.mu.Lock()
+	delete(pm.pods, sandboxID)
+	pm.mu.Unlock()
+
+	return nil
+}
+
+// ForceDeletePod immediately deletes a sandbox pod with no grace period.
+func (pm *PodManager) ForceDeletePod(ctx context.Context, sandboxID string) error {
+	podName := "sbx-" + sandboxID
+	zero := int64(0)
+	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
+		GracePeriodSeconds: &zero,
+	})
+	if err != nil {
+		return fmt.Errorf("force delete pod: %w", err)
 	}
 
 	pm.mu.Lock()

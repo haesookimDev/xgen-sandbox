@@ -173,6 +173,11 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		Metadata:    sbx.Metadata,
 	}
 
+	if req.GUI {
+		vncURL := s.router.PreviewURL(sbx.ID, 6080)
+		resp.VncURL = &vncURL
+	}
+
 	writeJSON(w, http.StatusCreated, resp)
 }
 
@@ -301,6 +306,12 @@ func (s *Server) sandboxToResponse(sbx *sandbox.Sandbox) v1.SandboxResponse {
 		ExpiresAt:   sbx.ExpiresAt,
 		Metadata:    sbx.Metadata,
 	}
+
+	if sbx.GUI {
+		vncURL := s.router.PreviewURL(sbx.ID, 6080)
+		resp.VncURL = &vncURL
+	}
+
 	return resp
 }
 

@@ -11,13 +11,24 @@ spec:
     - Ingress
     - Egress
   ingress:
-    # Only allow traffic from the agent namespace
+    # Allow sidecar WS and VNC from the agent namespace
     - from:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: xgen-system
       ports:
         - port: 9000
+          protocol: TCP
+        - port: 6080
+          protocol: TCP
+    # Allow preview port proxying from the agent namespace
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: xgen-system
+      ports:
+        - port: 1024
+          endPort: 65535
           protocol: TCP
   egress:
     # Allow outbound internet (for package installs etc.)

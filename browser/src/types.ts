@@ -43,6 +43,23 @@ export interface FileEntry {
   modTime: number;
 }
 
+export interface SandboxDesktopProps {
+  /** VNC URL for the sandbox desktop (https:// will be converted to wss://) */
+  vncUrl: string;
+  /** CSS class name */
+  className?: string;
+  /** Inline styles */
+  style?: React.CSSProperties;
+  /** Whether the desktop is view-only (no input) */
+  viewOnly?: boolean;
+  /** Scale the viewport to fit the container (default: true) */
+  scaleViewport?: boolean;
+  /** Called when VNC connects */
+  onConnect?: () => void;
+  /** Called when VNC disconnects */
+  onDisconnect?: (detail: { clean: boolean }) => void;
+}
+
 export interface SandboxFilesProps {
   /** Function to list directory contents */
   listDir: (path: string) => Promise<FileEntry[]>;
