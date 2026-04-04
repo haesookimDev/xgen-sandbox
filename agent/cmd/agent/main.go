@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -30,19 +31,40 @@ func main() {
 	previewRouter := proxy.NewRouter(cfg.PreviewDomain, sandboxMgr)
 
 	// Initialize K8s pod manager
-	// Use a pointer so the callback closure can reference it after initialization
 	var podMgr *k8spkg.PodManager
+	var warmPool *k8spkg.WarmPool
 	var initErr error
 	podMgr, initErr = k8spkg.NewPodManager(
 		cfg.SandboxNamespace,
 		cfg.SidecarImage,
 		cfg.RuntimeBaseImage,
 		func(sandboxID string) {
-			// Called when pod becomes ready
+			// Check if this is a warm pool pod
+			if warmPool != nil && warmPool.IsWarm(sandboxID) {
+				// Don't set sandbox status; just mark ready in warm pool
+				return
+			}
+			if warmPool != nil && strings.HasPrefix(sandboxID, "warm-") {
+				// Warm pod became ready, add to pool
+				if info, ok := podMgr.GetPodInfo(sandboxID); ok {
+					// Connect sidecar WS for warm pod
+					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+					defer cancel()
+					if err := wsProxy.ConnectToSidecar(ctx, sandboxID, info.PodIP); err != nil {
+						log.Printf("warm pool: connect to sidecar %s: %v", sandboxID, err)
+						return
+					}
+					// Extract template from pod labels via pod info
+					warmPool.MarkReady(sandboxID, "base")
+					log.Printf("warm pool: pod %s is ready", sandboxID)
+				}
+				return
+			}
+
+			// Normal sandbox pod ready
 			log.Printf("sandbox %s is ready", sandboxID)
 			sandboxMgr.SetStatus(sandboxID, v1.StatusRunning)
 
-			// Update pod IP and connect WebSocket
 			if info, ok := podMgr.GetPodInfo(sandboxID); ok {
 				sandboxMgr.SetPodIP(sandboxID, info.PodIP)
 				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
@@ -56,6 +78,8 @@ func main() {
 	if initErr != nil {
 		log.Fatalf("init pod manager: %v", initErr)
 	}
+
+	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -84,7 +108,10 @@ func main() {
 		}
 	}()
 
-	srv := server.NewServer(cfg, authenticator, sandboxMgr, podMgr, wsProxy, previewRouter)
+	// Start warm pool
+	warmPool.Start(ctx)
+
+	srv := server.NewServer(cfg, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, previewRouter)
 
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,

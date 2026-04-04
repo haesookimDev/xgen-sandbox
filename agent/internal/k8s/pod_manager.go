@@ -288,6 +288,17 @@ func (pm *PodManager) GetPodInfo(sandboxID string) (*PodInfo, bool) {
 	return info, ok
 }
 
+// RemapPod transfers a pod's cache entry from one sandboxID to another.
+func (pm *PodManager) RemapPod(oldID, newID string) {
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+	if info, ok := pm.pods[oldID]; ok {
+		info.SandboxID = newID
+		pm.pods[newID] = info
+		delete(pm.pods, oldID)
+	}
+}
+
 // ListPods returns all cached sandbox pod infos.
 func (pm *PodManager) ListPods() []*PodInfo {
 	pm.mu.RLock()

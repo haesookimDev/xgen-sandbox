@@ -16,36 +16,104 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-// Claims represents JWT-like claims for Phase 1 (simple HMAC-based tokens).
+// Role represents a user's access level.
+type Role string
+
+const (
+	RoleAdmin  Role = "admin"
+	RoleUser   Role = "user"
+	RoleViewer Role = "viewer"
+)
+
+// Permission represents an action that can be authorized.
+type Permission string
+
+const (
+	PermSandboxCreate Permission = "sandbox:create"
+	PermSandboxRead   Permission = "sandbox:read"
+	PermSandboxWrite  Permission = "sandbox:write"
+	PermSandboxDelete Permission = "sandbox:delete"
+	PermSandboxExec   Permission = "sandbox:exec"
+	PermSandboxFiles  Permission = "sandbox:files"
+)
+
+// rolePermissions maps each role to its allowed permissions.
+var rolePermissions = map[Role][]Permission{
+	RoleAdmin: {
+		PermSandboxCreate, PermSandboxRead, PermSandboxWrite,
+		PermSandboxDelete, PermSandboxExec, PermSandboxFiles,
+	},
+	RoleUser: {
+		PermSandboxCreate, PermSandboxRead, PermSandboxWrite,
+		PermSandboxExec, PermSandboxFiles,
+	},
+	RoleViewer: {
+		PermSandboxRead,
+	},
+}
+
+// HasPermission checks whether a role has the given permission.
+func (r Role) HasPermission(perm Permission) bool {
+	for _, p := range rolePermissions[r] {
+		if p == perm {
+			return true
+		}
+	}
+	return false
+}
+
+// Claims represents JWT-like claims with RBAC role.
 type Claims struct {
 	Subject   string    `json:"sub"`
+	Role      Role      `json:"role"`
 	ExpiresAt time.Time `json:"exp"`
 	IssuedAt  time.Time `json:"iat"`
 }
 
+// APIKeyEntry represents a configured API key with its associated role.
+type APIKeyEntry struct {
+	Key  string
+	Role Role
+}
+
 // Authenticator handles API key validation and token generation.
 type Authenticator struct {
-	apiKey    string
+	apiKeys   map[string]Role // apiKey -> role
 	jwtSecret []byte
 }
 
 // NewAuthenticator creates a new authenticator.
+// The first key is the default admin key for backward compatibility.
 func NewAuthenticator(apiKey, jwtSecret string) *Authenticator {
 	return &Authenticator{
-		apiKey:    apiKey,
+		apiKeys:   map[string]Role{apiKey: RoleAdmin},
+		jwtSecret: []byte(jwtSecret),
+	}
+}
+
+// NewAuthenticatorWithKeys creates an authenticator with multiple API keys.
+func NewAuthenticatorWithKeys(keys []APIKeyEntry, jwtSecret string) *Authenticator {
+	m := make(map[string]Role, len(keys))
+	for _, k := range keys {
+		m[k.Key] = k.Role
+	}
+	return &Authenticator{
+		apiKeys:   m,
 		jwtSecret: []byte(jwtSecret),
 	}
 }
 
 // GenerateToken creates a signed token from an API key.
 func (a *Authenticator) GenerateToken(apiKey string) (string, time.Time, error) {
-	if apiKey != a.apiKey {
+	role, ok := a.apiKeys[apiKey]
+	if !ok {
 		return "", time.Time{}, fmt.Errorf("invalid API key")
 	}
 
 	expiresAt := time.Now().Add(15 * time.Minute)
 	claims := Claims{
 		Subject:   "default",
+		Role:      role,
 		ExpiresAt: expiresAt,
 		IssuedAt:  time.Now(),
 	}
@@ -101,20 +169,19 @@ func (a *Authenticator) sign(data string) string {
 // It accepts both "Bearer <token>" and "ApiKey <key>" in the Authorization header.
 func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		auth := r.Header.Get("Authorization")
-		if auth == "" {
-			// Also check query param for WebSocket connections
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
 			if token := r.URL.Query().Get("token"); token != "" {
-				auth = "Bearer " + token
+				authHeader = "Bearer " + token
 			}
 		}
 
-		if auth == "" {
+		if authHeader == "" {
 			http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 			return
 		}
 
-		parts := strings.SplitN(auth, " ", 2)
+		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 {
 			http.Error(w, `{"error":"invalid authorization format"}`, http.StatusUnauthorized)
 			return
@@ -131,11 +198,12 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 
 		case "ApiKey":
-			if parts[1] != a.apiKey {
+			role, ok := a.apiKeys[parts[1]]
+			if !ok {
 				http.Error(w, `{"error":"invalid API key"}`, http.StatusUnauthorized)
 				return
 			}
-			claims := &Claims{Subject: "default"}
+			claims := &Claims{Subject: "default", Role: role}
 			ctx := context.WithValue(r.Context(), userContextKey, claims)
 			next.ServeHTTP(w, r.WithContext(ctx))
 
@@ -143,6 +211,24 @@ func (a *Authenticator) Middleware(next http.Handler) http.Handler {
 			http.Error(w, `{"error":"unsupported auth scheme"}`, http.StatusUnauthorized)
 		}
 	})
+}
+
+// RequirePermission returns middleware that checks a specific permission.
+func RequirePermission(perm Permission) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetClaims(r.Context())
+			if claims == nil {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			if !claims.Role.HasPermission(perm) {
+				http.Error(w, `{"error":"forbidden","code":"insufficient_permissions"}`, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(r.Context()))
+		})
+	}
 }
 
 // GetClaims extracts claims from the request context.

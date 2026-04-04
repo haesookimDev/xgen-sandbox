@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -24,6 +25,7 @@ type Server struct {
 	auth       *auth.Authenticator
 	sandboxMgr *sandbox.Manager
 	podMgr     *k8spkg.PodManager
+	warmPool   *k8spkg.WarmPool
 	wsProxy    *proxy.WSProxy
 	router     *proxy.Router
 }
@@ -34,6 +36,7 @@ func NewServer(
 	authenticator *auth.Authenticator,
 	sandboxMgr *sandbox.Manager,
 	podMgr *k8spkg.PodManager,
+	warmPool *k8spkg.WarmPool,
 	wsProxy *proxy.WSProxy,
 	previewRouter *proxy.Router,
 ) *Server {
@@ -42,6 +45,7 @@ func NewServer(
 		auth:       authenticator,
 		sandboxMgr: sandboxMgr,
 		podMgr:     podMgr,
+		warmPool:   warmPool,
 		wsProxy:    wsProxy,
 		router:     previewRouter,
 	}
@@ -68,14 +72,22 @@ func (s *Server) Handler() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.auth.Middleware)
 
-		r.Post("/api/v1/sandboxes", s.handleCreateSandbox)
-		r.Get("/api/v1/sandboxes", s.handleListSandboxes)
-		r.Get("/api/v1/sandboxes/{id}", s.handleGetSandbox)
-		r.Delete("/api/v1/sandboxes/{id}", s.handleDeleteSandbox)
-		r.Post("/api/v1/sandboxes/{id}/keepalive", s.handleKeepalive)
-		r.Post("/api/v1/sandboxes/{id}/exec", s.handleExec)
-		r.Get("/api/v1/sandboxes/{id}/ws", s.handleWS)
-		r.Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
+		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
+			Post("/api/v1/sandboxes", s.handleCreateSandbox)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v1/sandboxes", s.handleListSandboxes)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v1/sandboxes/{id}", s.handleGetSandbox)
+		r.With(auth.RequirePermission(auth.PermSandboxDelete)).
+			Delete("/api/v1/sandboxes/{id}", s.handleDeleteSandbox)
+		r.With(auth.RequirePermission(auth.PermSandboxWrite)).
+			Post("/api/v1/sandboxes/{id}/keepalive", s.handleKeepalive)
+		r.With(auth.RequirePermission(auth.PermSandboxExec)).
+			Post("/api/v1/sandboxes/{id}/exec", s.handleExec)
+		r.With(auth.RequirePermission(auth.PermSandboxExec)).
+			Get("/api/v1/sandboxes/{id}/ws", s.handleWS)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
 	})
 
 	return r
@@ -125,12 +137,23 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	sbx := s.sandboxMgr.Create(req.Template, timeout, req.Ports, req.GUI, req.Env, req.Metadata)
 
-	// Create K8s pod
-	if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI); err != nil {
-		s.sandboxMgr.Remove(sbx.ID)
-		log.Printf("create pod error: %v", err)
-		writeError(w, http.StatusInternalServerError, "failed to create sandbox")
-		return
+	// Try warm pool first, fall back to creating a new pod
+	if warmID := s.warmPool.Claim(req.Template); warmID != "" {
+		// Reuse warm pod: remap the warm pod's info to our new sandbox ID
+		if info, ok := s.podMgr.GetPodInfo(warmID); ok {
+			s.podMgr.RemapPod(warmID, sbx.ID)
+			s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
+			s.sandboxMgr.SetStatus(sbx.ID, "running")
+			log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
+			go s.warmPool.Replenish(context.Background(), req.Template)
+		}
+	} else {
+		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI); err != nil {
+			s.sandboxMgr.Remove(sbx.ID)
+			log.Printf("create pod error: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to create sandbox")
+			return
+		}
 	}
 
 	// Build preview URLs
