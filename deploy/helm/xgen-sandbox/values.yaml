@@ -1,0 +1,47 @@
+agent:
+  image:
+    repository: ghcr.io/xgen-sandbox/agent
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8080
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 256Mi
+  env:
+    SANDBOX_NAMESPACE: xgen-sandboxes
+    PREVIEW_DOMAIN: preview.localhost
+    API_KEY: xgen_dev_key
+    JWT_SECRET: xgen-dev-jwt-secret-change-in-production
+
+sidecar:
+  image:
+    repository: ghcr.io/xgen-sandbox/sidecar
+    tag: latest
+
+runtime:
+  baseImage: ghcr.io/xgen-sandbox/runtime-base:latest
+
+sandbox:
+  namespace: xgen-sandboxes
+  defaultTimeout: 1h
+  maxTimeout: 24h
+  warmPoolSize: 0
+  resourceQuota:
+    pods: "50"
+    requestsCpu: "25"
+    requestsMemory: "25Gi"
+    limitsCpu: "50"
+    limitsMemory: "50Gi"
+
+ingress:
+  enabled: false
+  className: traefik
+  host: agent.example.com
+  previewDomain: preview.example.com

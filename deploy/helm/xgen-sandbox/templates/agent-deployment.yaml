@@ -1,0 +1,58 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xgen-agent
+  namespace: xgen-system
+  labels:
+    app: xgen-agent
+spec:
+  replicas: {{ .Values.agent.replicas }}
+  selector:
+    matchLabels:
+      app: xgen-agent
+  template:
+    metadata:
+      labels:
+        app: xgen-agent
+    spec:
+      serviceAccountName: xgen-agent
+      containers:
+        - name: agent
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 8080
+          env:
+            - name: AGENT_LISTEN_ADDR
+              value: ":8080"
+            - name: SANDBOX_NAMESPACE
+              value: {{ .Values.sandbox.namespace }}
+            - name: SIDECAR_IMAGE
+              value: "{{ .Values.sidecar.image.repository }}:{{ .Values.sidecar.image.tag }}"
+            - name: RUNTIME_BASE_IMAGE
+              value: {{ .Values.runtime.baseImage }}
+            - name: PREVIEW_DOMAIN
+              value: {{ .Values.agent.env.PREVIEW_DOMAIN }}
+            - name: API_KEY
+              value: {{ .Values.agent.env.API_KEY }}
+            - name: JWT_SECRET
+              value: {{ .Values.agent.env.JWT_SECRET }}
+            - name: DEFAULT_TIMEOUT
+              value: {{ .Values.sandbox.defaultTimeout }}
+            - name: MAX_TIMEOUT
+              value: {{ .Values.sandbox.maxTimeout }}
+          resources:
+            {{- toYaml .Values.agent.resources | nindent 12 }}
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            initialDelaySeconds: 2
+            periodSeconds: 5
