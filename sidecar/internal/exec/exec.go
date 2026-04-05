@@ -5,6 +5,8 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"strings"
 	"sync"
 	"syscall"
 
@@ -50,23 +52,61 @@ func NewManager() *Manager {
 	}
 }
 
-// Start launches a new process and returns it.
-func (m *Manager) Start(opts StartOptions) (*Process, error) {
-	cmd := exec.Command(opts.Command, opts.Args...)
+// findRuntimePID finds the PID of the runtime container's init process ("sleep infinity").
+func findRuntimePID() (string, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return "", fmt.Errorf("read /proc: %w", err)
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		if e.Name()[0] < '1' || e.Name()[0] > '9' {
+			continue
+		}
+		cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
+		if err != nil {
+			continue
+		}
+		if strings.Contains(string(cmdline), "sleep\x00infinity") {
+			return e.Name(), nil
+		}
+	}
+	return "", fmt.Errorf("runtime container process not found")
+}
 
-	if opts.Cwd != "" {
-		cmd.Dir = opts.Cwd
-	} else {
-		cmd.Dir = "/home/sandbox/workspace"
+// Start launches a new process and returns it.
+// Commands run inside the runtime container's filesystem via chroot.
+func (m *Manager) Start(opts StartOptions) (*Process, error) {
+	runtimePID, err := findRuntimePID()
+	if err != nil {
+		return nil, fmt.Errorf("find runtime container: %w", err)
 	}
 
-	cmd.Env = os.Environ()
+	runtimeRoot := filepath.Join("/proc", runtimePID, "root")
+	cmd := exec.Command(opts.Command, opts.Args...)
+
+	cwd := opts.Cwd
+	if cwd == "" {
+		cwd = "/home/sandbox/workspace"
+	}
+	cmd.Dir = cwd
+
+	cmd.Env = []string{
+		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"HOME=/home/sandbox",
+		"USER=sandbox",
+		"TERM=xterm-256color",
+	}
 	for k, v := range opts.Env {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
-	// Set process group so we can kill the entire tree
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Chroot:  runtimeRoot,
+		Setpgid: true,
+	}
 
 	m.mu.Lock()
 	id := m.nextID

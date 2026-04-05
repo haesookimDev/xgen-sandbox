@@ -181,11 +181,11 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 				},
 			},
 			SecurityContext: &corev1.SecurityContext{
-				RunAsUser:                &rootUser,
-				AllowPrivilegeEscalation: boolPtr(false),
-				ReadOnlyRootFilesystem:   boolPtr(true),
+				RunAsUser:              &rootUser,
+				ReadOnlyRootFilesystem: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
+					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE"},
 				},
 			},
 			ReadinessProbe: &corev1.Probe{
