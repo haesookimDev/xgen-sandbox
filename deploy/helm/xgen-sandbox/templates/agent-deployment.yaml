@@ -38,10 +38,14 @@ spec:
               value: {{ .Values.agent.env.API_KEY }}
             - name: JWT_SECRET
               value: {{ .Values.agent.env.JWT_SECRET }}
+            - name: AGENT_EXTERNAL_URL
+              value: {{ .Values.agent.env.AGENT_EXTERNAL_URL | default "http://localhost:8080" }}
             - name: DEFAULT_TIMEOUT
               value: {{ .Values.sandbox.defaultTimeout }}
             - name: MAX_TIMEOUT
               value: {{ .Values.sandbox.maxTimeout }}
+            - name: WARM_POOL_SIZE
+              value: "{{ .Values.sandbox.warmPoolSize }}"
           resources:
             {{- toYaml .Values.agent.resources | nindent 12 }}
           livenessProbe:
