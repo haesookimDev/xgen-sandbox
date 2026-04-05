@@ -28,10 +28,11 @@ type PodInfo struct {
 
 // PodManager handles K8s pod lifecycle for sandboxes.
 type PodManager struct {
-	client    kubernetes.Interface
-	namespace string
-	sidecar   string
-	runtime   string
+	client      kubernetes.Interface
+	namespace   string
+	sidecar     string
+	runtime     string
+	pullPolicy  corev1.PullPolicy
 
 	mu   sync.RWMutex
 	pods map[string]*PodInfo // sandboxID -> PodInfo
@@ -40,7 +41,7 @@ type PodManager struct {
 }
 
 // NewPodManager creates a new PodManager.
-func NewPodManager(namespace, sidecarImage, runtimeImage string, onReady func(string)) (*PodManager, error) {
+func NewPodManager(namespace, sidecarImage, runtimeImage, imagePullPolicy string, onReady func(string)) (*PodManager, error) {
 	config, err := rest.InClusterConfig()
 	if err != nil {
 		// Fallback to kubeconfig for local dev
@@ -56,12 +57,13 @@ func NewPodManager(namespace, sidecarImage, runtimeImage string, onReady func(st
 	}
 
 	pm := &PodManager{
-		client:    clientset,
-		namespace: namespace,
-		sidecar:   sidecarImage,
-		runtime:   runtimeImage,
-		pods:      make(map[string]*PodInfo),
-		onReady:   onReady,
+		client:     clientset,
+		namespace:  namespace,
+		sidecar:    sidecarImage,
+		runtime:    runtimeImage,
+		pullPolicy: corev1.PullPolicy(imagePullPolicy),
+		pods:       make(map[string]*PodInfo),
+		onReady:    onReady,
 	}
 
 	return pm, nil
@@ -157,8 +159,9 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 
 	containers := []corev1.Container{
 		{
-			Name:  "sidecar",
-			Image: pm.sidecar,
+			Name:            "sidecar",
+			Image:           pm.sidecar,
+			ImagePullPolicy: pm.pullPolicy,
 			Ports: []corev1.ContainerPort{
 				{Name: "ws", ContainerPort: 9000},
 				{Name: "health", ContainerPort: 9001},
@@ -197,6 +200,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		{
 			Name:            "runtime",
 			Image:           runtimeImage,
+			ImagePullPolicy: pm.pullPolicy,
 			Command:         []string{"sleep", "infinity"},
 			Env:             envVars,
 			SecurityContext: restrictedSC,
@@ -221,6 +225,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		containers = append(containers, corev1.Container{
 			Name:            "vnc",
 			Image:           "ghcr.io/xgen-sandbox/novnc:latest",
+			ImagePullPolicy: pm.pullPolicy,
 			SecurityContext: restrictedSC,
 			Ports: []corev1.ContainerPort{
 				{Name: "novnc", ContainerPort: 6080},

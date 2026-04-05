@@ -29,6 +29,7 @@ runtime:
   baseImage: ghcr.io/xgen-sandbox/runtime-base:latest
 
 sandbox:
+  imagePullPolicy: ""
   namespace: xgen-sandboxes
   defaultTimeout: 1h
   maxTimeout: 24h

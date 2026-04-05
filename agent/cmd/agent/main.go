@@ -43,6 +43,7 @@ func main() {
 		cfg.SandboxNamespace,
 		cfg.SidecarImage,
 		cfg.RuntimeBaseImage,
+		cfg.ImagePullPolicy,
 		func(sandboxID string) {
 			// Check if this is a warm pool pod
 			if warmPool != nil && warmPool.IsWarm(sandboxID) {

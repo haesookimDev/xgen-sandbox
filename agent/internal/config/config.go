@@ -17,6 +17,7 @@ type Config struct {
 	DefaultTimeout      time.Duration
 	MaxTimeout          time.Duration
 	WarmPoolSize        int
+	ImagePullPolicy     string
 	APIKey              string // single API key for Phase 1; replaced by DB lookup later
 	JWTSecret           string
 }
@@ -30,6 +31,7 @@ func Load() *Config {
 		SandboxNamespace: envOrDefault("SANDBOX_NAMESPACE", "xgen-sandboxes"),
 		SidecarImage:     envOrDefault("SIDECAR_IMAGE", "ghcr.io/xgen-sandbox/sidecar:latest"),
 		RuntimeBaseImage: envOrDefault("RUNTIME_BASE_IMAGE", "ghcr.io/xgen-sandbox/runtime-base:latest"),
+		ImagePullPolicy:  envOrDefault("IMAGE_PULL_POLICY", ""),
 		DefaultTimeout:   envDurationOrDefault("DEFAULT_TIMEOUT", 1*time.Hour),
 		MaxTimeout:       envDurationOrDefault("MAX_TIMEOUT", 24*time.Hour),
 		WarmPoolSize:     envIntOrDefault("WARM_POOL_SIZE", 0),

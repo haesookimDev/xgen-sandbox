@@ -32,7 +32,8 @@ dev-deploy:
 	helm upgrade --install xgen-sandbox deploy/helm/xgen-sandbox \
 		--namespace xgen-system --create-namespace \
 		--set agent.image.pullPolicy=Never \
-		--set sidecar.image.pullPolicy=Never
+		--set sidecar.image.pullPolicy=Never \
+		--set sandbox.imagePullPolicy=Never
 
 dev-teardown:
 	kind delete cluster --name xgen-sandbox
