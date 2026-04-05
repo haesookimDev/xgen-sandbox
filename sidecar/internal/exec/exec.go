@@ -94,10 +94,11 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 	nsenterArgs := []string{
 		"--target", runtimePID,
 		"--mount", "--pid",
+		"--wd", cwd,
 		"--",
-		"sh", "-c",
-		fmt.Sprintf("cd %s && exec %s", cwd, buildShellCommand(opts.Command, opts.Args)),
 	}
+	nsenterArgs = append(nsenterArgs, opts.Command)
+	nsenterArgs = append(nsenterArgs, opts.Args...)
 	cmd := exec.Command("nsenter", nsenterArgs...)
 
 	cmd.Env = os.Environ()

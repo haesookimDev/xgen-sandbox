@@ -220,6 +220,7 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 		Rows:    payload.Rows,
 	})
 	if err != nil {
+		log.Printf("exec start failed: %v (command=%s args=%v)", err, payload.Command, payload.Args)
 		s.sendError(env.Channel, env.ID, "exec_failed", err.Error())
 		return
 	}

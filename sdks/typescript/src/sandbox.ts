@@ -89,12 +89,25 @@ export class Sandbox {
           cleanupStdout();
           cleanupStderr();
           cleanupExit();
+          cleanupError();
           const result = decodePayload<{ exit_code: number }>(env.payload);
           resolve({
             exitCode: result.exit_code,
             stdout,
             stderr,
           });
+        }
+      });
+
+      const cleanupError = ws.on(MsgType.Error, (env) => {
+        if (env.channel === channel || env.channel === 0) {
+          clearTimeout(timer);
+          cleanupStdout();
+          cleanupStderr();
+          cleanupExit();
+          cleanupError();
+          const error = decodePayload<{ code: string; message: string }>(env.payload);
+          reject(new Error(`${error.code}: ${error.message}`));
         }
       });
 
@@ -157,6 +170,15 @@ export class Sandbox {
       }
     });
 
+    const cleanupError = ws.on(MsgType.Error, (env) => {
+      if (env.channel === channel || env.channel === 0) {
+        const error = decodePayload<{ code: string; message: string }>(env.payload);
+        push({ type: "stderr", data: `Error: ${error.code}: ${error.message}` });
+        push({ type: "exit", exitCode: 1 });
+        done = true;
+      }
+    });
+
     const payload = encodePayload({
       command: "sh",
       args: ["-c", command, ...(options?.args ?? [])],
@@ -182,6 +204,7 @@ export class Sandbox {
       cleanupStdout();
       cleanupStderr();
       cleanupExit();
+      cleanupError();
     }
   }
 
