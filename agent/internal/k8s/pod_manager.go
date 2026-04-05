@@ -150,13 +150,17 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 
+	sandboxUser := int64(1000)
 	restrictedSC := &corev1.SecurityContext{
+		RunAsUser:                &sandboxUser,
+		RunAsNonRoot:             boolPtr(true),
 		AllowPrivilegeEscalation: boolPtr(false),
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
 	}
 
+	rootUser := int64(0)
 	containers := []corev1.Container{
 		{
 			Name:            "sidecar",
@@ -177,6 +181,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 				},
 			},
 			SecurityContext: &corev1.SecurityContext{
+				RunAsUser:                &rootUser,
 				AllowPrivilegeEscalation: boolPtr(false),
 				ReadOnlyRootFilesystem:   boolPtr(true),
 				Capabilities: &corev1.Capabilities{
@@ -248,7 +253,6 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	}
 
 	shareProcessNamespace := true
-	sandboxUser := int64(1000)
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sbx-" + sandboxID,
@@ -264,10 +268,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			RestartPolicy:                corev1.RestartPolicyNever,
 			AutomountServiceAccountToken: boolPtr(false),
 			SecurityContext: &corev1.PodSecurityContext{
-				RunAsNonRoot: boolPtr(true),
-				RunAsUser:    &sandboxUser,
-				RunAsGroup:   &sandboxUser,
-				FSGroup:      &sandboxUser,
+				FSGroup: &sandboxUser,
 				SeccompProfile: &corev1.SeccompProfile{
 					Type: corev1.SeccompProfileTypeRuntimeDefault,
 				},

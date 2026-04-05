@@ -11,7 +11,8 @@ FROM alpine:3.19
 RUN apk add --no-cache ca-certificates bash util-linux
 COPY --from=builder /sidecar /usr/local/bin/sidecar
 
-USER 1000:1000
+# Sidecar runs as root in the pod (with dropped caps + SYS_ADMIN only)
+# to support nsenter into the runtime container's mount namespace.
 EXPOSE 9000 9001
 
 ENTRYPOINT ["/usr/local/bin/sidecar"]

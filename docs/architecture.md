@@ -66,9 +66,9 @@ The Agent is the control plane. It runs in the `xgen-system` namespace and provi
 
 The Sidecar runs as a container in every sandbox pod. It communicates with the Agent over a binary WebSocket protocol:
 
-- **Exec Manager** — Starts processes, streams stdin/stdout/stderr, handles signals and PTY resize
+- **Exec Manager** — Starts processes via `nsenter --mount` into the runtime container's mount namespace, streams stdin/stdout/stderr, handles signals and PTY resize. Requires `CAP_SYS_ADMIN` (sidecar runs as root with all other caps dropped).
 - **Filesystem Handler** — Read, write, list, remove files; watches for file changes
-- **Port Detector** — Monitors for newly opened TCP ports and reports them
+- **Port Detector** — Monitors `/proc/net/tcp` for newly opened TCP ports and reports them (works across containers because the pod shares a network namespace)
 - **Health Check** — `/healthz` and `/readyz` on port 9001
 
 ### Sandbox Pod Structure
@@ -77,8 +77,8 @@ Each sandbox pod contains 2-3 containers sharing a process namespace:
 
 | Container | Port | Purpose | Resources |
 |-----------|------|---------|-----------|
-| **sidecar** | 9000 (WS), 9001 (health) | Process/file/port management | 50m-200m CPU, 32-64Mi mem |
-| **runtime** | — | User code execution (`sleep infinity`) | 250m-1000m CPU, 256-512Mi mem |
+| **sidecar** | 9000 (WS), 9001 (health) | Process/file/port management (runs as root, caps: SYS_ADMIN + SYS_PTRACE only) | 50m-200m CPU, 32-64Mi mem |
+| **runtime** | — | User code execution (`sleep infinity`, runs as UID 1000) | 250m-1000m CPU, 256-512Mi mem |
 | **vnc** (if `gui=true`) | 6080 (noVNC) | Xvfb + x11vnc + websockify | 100m-500m CPU, 128-256Mi mem |
 
 Shared volume: `emptyDir` (1Gi limit) mounted at `/home/sandbox/workspace`
@@ -217,3 +217,62 @@ The Helm chart creates:
 | Ingress (optional) | xgen-system | External access |
 | HPA (optional) | xgen-system | Auto-scaling |
 | PDB (optional) | xgen-system | Disruption budget |
+
+## Command Execution Flow (nsenter)
+
+The sidecar executes commands inside the runtime container using Linux namespace entry:
+
+```
+1. SDK sends ExecStart { command: "sh", args: ["-c", "node server.js"] }
+2. Agent WS proxy forwards binary message to sidecar
+3. Sidecar findRuntimePID() scans /proc for "sleep infinity" process
+4. Sidecar runs: nsenter --target <PID> --mount --wd /home/sandbox/workspace -- sh -c "node server.js"
+5. nsenter enters the runtime container's mount namespace (CAP_SYS_ADMIN required)
+6. Command executes with runtime's filesystem (node, python, etc. available)
+7. stdout/stderr streamed back via WS binary protocol
+```
+
+Key points:
+- `--mount` enters the runtime container's filesystem namespace (to access node/python binaries)
+- `--pid` is NOT needed because `shareProcessNamespace: true` already shares PIDs
+- `--wd` sets the working directory (nsenter built-in, no shell wrapper needed)
+- The sidecar runs as root (UID 0) with only `CAP_SYS_ADMIN` + `CAP_SYS_PTRACE` capabilities
+- The runtime container runs as non-root (UID 1000) with no special capabilities
+- Network namespace is shared at the pod level, so ports opened by the runtime are visible to the port detector
+
+## Debugging
+
+Use the debug script for diagnosing issues:
+
+```bash
+# Overview of all components
+./scripts/debug-sandbox.sh
+
+# Debug a specific sandbox
+./scripts/debug-sandbox.sh <sandbox-id>
+
+# Test exec via REST API
+./scripts/debug-sandbox.sh exec <sandbox-id> echo hello
+
+# Check sidecar logs
+kubectl logs -n xgen-sandboxes sbx-<id> -c sidecar
+
+# Check runtime container logs
+kubectl logs -n xgen-sandboxes sbx-<id> -c runtime
+
+# Check agent logs
+kubectl logs -n xgen-system deployment/xgen-agent --tail=50
+
+# Verify sidecar capabilities
+kubectl exec -n xgen-sandboxes sbx-<id> -c sidecar -- cat /proc/1/status | grep Cap
+```
+
+### Common Issues
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `nsenter: Operation not permitted` | Missing `CAP_SYS_ADMIN` | Sidecar must run as root with SYS_ADMIN capability |
+| `sandbox service unavailable` (502) | No process listening on the requested port | Check exec output for errors; verify server binds to `0.0.0.0` |
+| `sandbox not ready` (503) | Pod IP not yet assigned | Wait for pod readiness; check pod status |
+| Empty exec output | SDK not handling MsgError | Check sidecar logs for `exec start failed` |
+| `runtime container process not found` | Cannot find `sleep infinity` in /proc | Verify runtime container is running with `sleep infinity` command |

@@ -106,6 +106,7 @@ func (s *Server) Handler() http.Handler {
 		}
 		defer conn.CloseNow()
 
+		log.Printf("ws connection accepted from %s", r.RemoteAddr)
 		s.connMu.Lock()
 		s.conn = conn
 		s.connMu.Unlock()
@@ -150,6 +151,7 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn) {
 			continue
 		}
 
+		log.Printf("recv msg type=0x%02x channel=%d id=%d payloadLen=%d", env.Type, env.Channel, env.ID, len(env.Payload))
 		go s.handleMessage(ctx, env)
 	}
 }
@@ -235,19 +237,30 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 	ackPayload, _ := msgpack.Marshal(map[string]uint32{"process_id": proc.ID, "channel": chanID})
 	s.sendEnvelope(&envelope{Type: MsgAck, Channel: chanID, ID: env.ID, Payload: ackPayload})
 
-	// Stream stdout
+	// Stream stdout/stderr, tracking completion with a WaitGroup so that
+	// ExecExit is only sent after all output has been flushed to the client.
+	var wg sync.WaitGroup
+
 	if stdout := proc.Stdout(); stdout != nil {
-		go s.streamOutput(ctx, stdout, MsgExecStdout, chanID, proc)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.streamOutput(ctx, stdout, MsgExecStdout, chanID, proc)
+		}()
 	}
 
-	// Stream stderr (nil for TTY sessions)
 	if stderr := proc.Stderr(); stderr != nil {
-		go s.streamOutput(ctx, stderr, MsgExecStderr, chanID, proc)
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			s.streamOutput(ctx, stderr, MsgExecStderr, chanID, proc)
+		}()
 	}
 
-	// Wait for exit
+	// Wait for exit, then wait for streams to finish before sending ExecExit
 	go func() {
 		<-proc.Done()
+		wg.Wait()
 		exitPayload, _ := msgpack.Marshal(map[string]int{"exit_code": proc.ExitCode()})
 		s.sendEnvelope(&envelope{Type: MsgExecExit, Channel: chanID, Payload: exitPayload})
 		proc.Close()
@@ -442,11 +455,14 @@ func (s *Server) sendEnvelope(env *envelope) {
 	s.connMu.Unlock()
 
 	if conn == nil {
+		log.Printf("send msg type=0x%02x: no connection", env.Type)
 		return
 	}
 
 	data := encodeEnvelope(env)
-	conn.Write(context.Background(), websocket.MessageBinary, data)
+	if err := conn.Write(context.Background(), websocket.MessageBinary, data); err != nil {
+		log.Printf("send msg type=0x%02x: write error: %v", env.Type, err)
+	}
 }
 
 func (s *Server) sendError(channel, id uint32, code, message string) {

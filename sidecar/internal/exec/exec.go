@@ -93,7 +93,7 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 	}
 	nsenterArgs := []string{
 		"--target", runtimePID,
-		"--mount", "--pid",
+		"--mount",
 		"--wd", cwd,
 		"--",
 	}
@@ -143,18 +143,37 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 		if err != nil {
 			return nil, fmt.Errorf("stdin pipe: %w", err)
 		}
-		proc.stdout, err = cmd.StdoutPipe()
+
+		// Use os.Pipe() instead of cmd.StdoutPipe()/StderrPipe() to prevent
+		// cmd.Wait() from closing the read-ends before streaming goroutines
+		// finish reading. See: https://pkg.go.dev/os/exec#Cmd.StdoutPipe
+		stdoutR, stdoutW, err := os.Pipe()
 		if err != nil {
 			return nil, fmt.Errorf("stdout pipe: %w", err)
 		}
-		proc.stderr, err = cmd.StderrPipe()
+		cmd.Stdout = stdoutW
+		proc.stdout = stdoutR
+
+		stderrR, stderrW, err := os.Pipe()
 		if err != nil {
+			stdoutR.Close()
+			stdoutW.Close()
 			return nil, fmt.Errorf("stderr pipe: %w", err)
 		}
+		cmd.Stderr = stderrW
+		proc.stderr = stderrR
 
 		if err := cmd.Start(); err != nil {
+			stdoutR.Close()
+			stdoutW.Close()
+			stderrR.Close()
+			stderrW.Close()
 			return nil, fmt.Errorf("start process: %w", err)
 		}
+		// Close write ends in parent; child inherited them via fork.
+		// When child exits, OS closes its copies → readers get EOF.
+		stdoutW.Close()
+		stderrW.Close()
 	}
 
 	// Wait for process exit in background
@@ -271,5 +290,11 @@ func (p *Process) Close() {
 	}
 	if p.stdin != nil {
 		p.stdin.Close()
+	}
+	if p.stdout != nil {
+		p.stdout.Close()
+	}
+	if p.stderr != nil {
+		p.stderr.Close()
 	}
 }
