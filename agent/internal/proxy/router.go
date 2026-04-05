@@ -15,14 +15,20 @@ import (
 
 // Router provides dynamic reverse proxying to sandbox services.
 type Router struct {
-	previewDomain string
+	previewDomain string // full domain, may include port (e.g. "preview.localhost:8080")
+	domainHost    string // hostname only, without port (e.g. "preview.localhost")
 	sandboxMgr    *sandbox.Manager
 }
 
 // NewRouter creates a new sandbox service router.
 func NewRouter(previewDomain string, sandboxMgr *sandbox.Manager) *Router {
+	domainHost := previewDomain
+	if idx := strings.LastIndex(domainHost, ":"); idx != -1 {
+		domainHost = domainHost[:idx]
+	}
 	return &Router{
 		previewDomain: previewDomain,
+		domainHost:    domainHost,
 		sandboxMgr:    sandboxMgr,
 	}
 }
@@ -38,13 +44,13 @@ func (r *Router) Handler() http.Handler {
 		}
 
 		// Check if this is a preview domain request
-		if !strings.HasSuffix(host, "."+r.previewDomain) {
+		if !strings.HasSuffix(host, "."+r.domainHost) {
 			http.Error(w, "not a preview domain", http.StatusNotFound)
 			return
 		}
 
 		// Parse subdomain: sbx-{id}-{port}
-		subdomain := strings.TrimSuffix(host, "."+r.previewDomain)
+		subdomain := strings.TrimSuffix(host, "."+r.domainHost)
 		sandboxID, port, err := parseSubdomain(subdomain)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -80,9 +86,18 @@ func (r *Router) Handler() http.Handler {
 	})
 }
 
+// DomainHost returns the preview domain hostname without port.
+func (r *Router) DomainHost() string {
+	return r.domainHost
+}
+
 // PreviewURL generates the preview URL for a sandbox port.
 func (r *Router) PreviewURL(sandboxID string, port int) string {
-	return fmt.Sprintf("https://sbx-%s-%d.%s", sandboxID, port, r.previewDomain)
+	scheme := "https"
+	if strings.HasSuffix(r.domainHost, ".localhost") {
+		scheme = "http"
+	}
+	return fmt.Sprintf("%s://sbx-%s-%d.%s", scheme, sandboxID, port, r.previewDomain)
 }
 
 // parseSubdomain extracts sandbox ID and port from "sbx-{id}-{port}".

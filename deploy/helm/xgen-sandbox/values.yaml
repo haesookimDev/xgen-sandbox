@@ -7,6 +7,7 @@ agent:
   service:
     type: ClusterIP
     port: 8080
+    nodePort: 30080
   resources:
     requests:
       cpu: 100m
@@ -16,7 +17,7 @@ agent:
       memory: 256Mi
   env:
     SANDBOX_NAMESPACE: xgen-sandboxes
-    PREVIEW_DOMAIN: preview.localhost
+    PREVIEW_DOMAIN: preview.localhost:8080
     API_KEY: xgen_dev_key
     JWT_SECRET: xgen-dev-jwt-secret-change-in-production
 

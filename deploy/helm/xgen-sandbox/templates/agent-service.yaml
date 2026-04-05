@@ -9,5 +9,8 @@ spec:
     - name: http
       port: {{ .Values.agent.service.port }}
       targetPort: http
+      {{- if eq .Values.agent.service.type "NodePort" }}
+      nodePort: {{ .Values.agent.service.nodePort }}
+      {{- end }}
   selector:
     app: xgen-agent

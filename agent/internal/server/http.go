@@ -7,6 +7,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -57,7 +58,29 @@ func NewServer(
 }
 
 // Handler returns the configured HTTP handler.
+// It routes preview domain requests to the preview router and everything else to the API router.
 func (s *Server) Handler() http.Handler {
+	apiRouter := s.apiHandler()
+	previewHandler := s.router.Handler()
+	domainHost := s.router.DomainHost()
+
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		host := r.Host
+		if idx := strings.LastIndex(host, ":"); idx != -1 {
+			host = host[:idx]
+		}
+
+		if strings.HasSuffix(host, "."+domainHost) {
+			previewHandler.ServeHTTP(w, r)
+			return
+		}
+
+		apiRouter.ServeHTTP(w, r)
+	})
+}
+
+// apiHandler returns the chi router for API endpoints.
+func (s *Server) apiHandler() http.Handler {
 	r := chi.NewRouter()
 
 	r.Use(structuredLogger(s.logger))
