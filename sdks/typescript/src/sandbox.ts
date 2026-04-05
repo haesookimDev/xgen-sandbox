@@ -98,14 +98,9 @@ export class Sandbox {
         }
       });
 
-      // Parse command into program + args
-      const parts = command.split(/\s+/);
-      const program = parts[0];
-      const args = [...parts.slice(1), ...(options?.args ?? [])];
-
       const payload = encodePayload({
-        command: program,
-        args,
+        command: "sh",
+        args: ["-c", command, ...(options?.args ?? [])],
         env: options?.env,
         cwd: options?.cwd,
         tty: false,
@@ -162,10 +157,9 @@ export class Sandbox {
       }
     });
 
-    const parts = command.split(/\s+/);
     const payload = encodePayload({
-      command: parts[0],
-      args: [...parts.slice(1), ...(options?.args ?? [])],
+      command: "sh",
+      args: ["-c", command, ...(options?.args ?? [])],
       env: options?.env,
       cwd: options?.cwd,
       tty: false,

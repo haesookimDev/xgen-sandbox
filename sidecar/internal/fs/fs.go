@@ -58,10 +58,10 @@ func (h *Handler) WriteFile(path string, content []byte, mode os.FileMode) error
 
 // FileEntry represents a file or directory in a listing.
 type FileEntry struct {
-	Name    string `json:"name"`
-	Size    int64  `json:"size"`
-	IsDir   bool   `json:"is_dir"`
-	ModTime int64  `json:"mod_time"`
+	Name    string `json:"name" msgpack:"name"`
+	Size    int64  `json:"size" msgpack:"size"`
+	IsDir   bool   `json:"is_dir" msgpack:"isDir"`
+	ModTime int64  `json:"mod_time" msgpack:"modTime"`
 }
 
 // ListDir lists the contents of a directory.
