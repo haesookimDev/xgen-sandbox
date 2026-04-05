@@ -70,20 +70,122 @@ kubectl get pods -n xgen-system
 kubectl logs -n xgen-system deployment/xgen-agent
 ```
 
-### Port Forward
+### Access the Agent
 
-The agent runs inside the cluster. To access it locally:
-
-```bash
-kubectl port-forward -n xgen-system svc/xgen-agent 8080:8080
-```
-
-Keep this running in a dedicated terminal. All SDK and curl tests below assume `localhost:8080`.
+The Kind cluster maps NodePort 30080 to host port 8080 (see `deploy/dev/kind-config.yaml`).
+The agent is exposed as a NodePort service, so it's available at `localhost:8080` without port-forwarding.
 
 ```bash
 # Quick health check
 curl http://localhost:8080/healthz
 # ok
+```
+
+> **Fallback**: If NodePort isn't working, use port-forward instead:
+> ```bash
+> kubectl port-forward -n xgen-system svc/xgen-agent 8080:8080
+> ```
+
+### DNS Setup for Preview URLs
+
+Preview URLs use wildcard subdomains like `sbx-<id>-3000.preview.localhost:8080`.
+These must resolve to `127.0.0.1` so the browser can reach the agent, which reverse-proxies to the sandbox pod.
+
+#### macOS
+
+On modern macOS, `*.localhost` already resolves to `127.0.0.1` by default (RFC 6761). Verify:
+
+```bash
+dscacheutil -q host -a name sbx-test-3000.preview.localhost
+# Should show: ip_address: 127.0.0.1
+```
+
+If it doesn't resolve, add a local DNS resolver:
+
+```bash
+# Create resolver directory if it doesn't exist
+sudo mkdir -p /etc/resolver
+
+# Add wildcard rule for preview.localhost
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/localhost
+```
+
+Or add entries to `/etc/hosts` (limited — no wildcard support, must add per-sandbox):
+
+```bash
+# Not recommended: you'd need to add a line for every sandbox
+echo "127.0.0.1 sbx-abc123-3000.preview.localhost" | sudo tee -a /etc/hosts
+```
+
+**Recommended approach for macOS**: Use [dnsmasq](https://formulae.brew.sh/formula/dnsmasq) for true wildcard DNS:
+
+```bash
+# Install
+brew install dnsmasq
+
+# Route all *.localhost to 127.0.0.1
+echo "address=/localhost/127.0.0.1" >> $(brew --prefix)/etc/dnsmasq.conf
+
+# Start as a service
+sudo brew services start dnsmasq
+
+# Point macOS at dnsmasq for .localhost domains
+sudo mkdir -p /etc/resolver
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolver/localhost
+
+# Verify
+dig sbx-test-3000.preview.localhost @127.0.0.1
+# Should return 127.0.0.1
+```
+
+#### Linux
+
+Add a wildcard DNS entry using systemd-resolved or dnsmasq:
+
+**Option A: systemd-resolved (Ubuntu 18.04+)**
+
+```bash
+# Most Linux systems resolve *.localhost to 127.0.0.1 by default. Verify:
+getent hosts sbx-test-3000.preview.localhost
+
+# If not working, add to /etc/hosts (no wildcard support):
+echo "127.0.0.1 sbx-test-3000.preview.localhost" | sudo tee -a /etc/hosts
+```
+
+**Option B: dnsmasq**
+
+```bash
+sudo apt install dnsmasq
+
+# Route all *.localhost to 127.0.0.1
+echo "address=/localhost/127.0.0.1" | sudo tee /etc/dnsmasq.d/localhost.conf
+sudo systemctl restart dnsmasq
+
+# Point /etc/resolv.conf to dnsmasq
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+```
+
+#### Verify DNS
+
+```bash
+# Should all resolve to 127.0.0.1:
+curl -s -o /dev/null -w "%{http_code}" http://sbx-test-3000.preview.localhost:8080
+# 404 is expected (no sandbox with that ID), but it means DNS + routing works
+
+# If you get "Could not resolve host", DNS is not set up correctly
+```
+
+#### How Preview Routing Works
+
+```
+Browser → sbx-<id>-3000.preview.localhost:8080
+    ↓ DNS resolves to 127.0.0.1
+localhost:8080 → Kind NodePort 30080 → Agent pod
+    ↓ Agent checks Host header
+    ↓ Matches *.preview.localhost → Preview Router
+    ↓ Parses subdomain: sandbox ID + port
+    ↓ Reverse proxy to pod_ip:3000
+    → Sandbox runtime container
 ```
 
 ---
@@ -579,17 +681,36 @@ curl -s -X POST http://localhost:8080/api/v1/sandboxes \
 
 ## 10. Troubleshooting
 
+### Debug Script
+
+Use the built-in debug script for quick diagnosis:
+
+```bash
+# Overview: agent status, sandbox pods, recent logs
+./scripts/debug-sandbox.sh
+
+# Debug a specific sandbox: pod status, capabilities, exec test, port scan
+./scripts/debug-sandbox.sh <sandbox-id>
+
+# Test exec via REST API
+./scripts/debug-sandbox.sh exec <sandbox-id> echo hello
+./scripts/debug-sandbox.sh exec <sandbox-id> node --version
+```
+
 ### Common Issues
 
 | Symptom | Cause | Solution |
 |---------|-------|----------|
-| `connection refused` on :8080 | Port forward not running | Run `kubectl port-forward -n xgen-system svc/xgen-agent 8080:8080` |
+| `connection refused` on :8080 | Agent not accessible | Check Kind is running: `kind get clusters`. Check NodePort: `kubectl get svc -n xgen-system` |
+| `sandbox service unavailable` (502) | No process listening on the requested port | Verify exec works first: `./scripts/debug-sandbox.sh exec <id> echo hello`. Check server binds to `0.0.0.0` not `127.0.0.1` |
+| `Could not resolve host` on preview URL | DNS not set up for `*.preview.localhost` | See [DNS Setup](#dns-setup-for-preview-urls) above |
+| `nsenter: Operation not permitted` | Sidecar missing capabilities | Sidecar must run as root with `CAP_SYS_ADMIN`. Check: `./scripts/debug-sandbox.sh <id>` |
 | Pod stuck in `ImagePullBackOff` | Image not loaded into Kind | Run `make dev-cluster` or manually `kind load docker-image` |
-| Pod stuck in `Pending` | ResourceQuota exceeded | Delete old sandboxes or increase quota in values.yaml |
-| Sandbox stays in `starting` | Sidecar readiness probe failing | Check sidecar logs: `kubectl logs <pod> -n xgen-sandboxes -c sidecar` |
+| Pod stuck in `Pending` | ResourceQuota exceeded | Delete old sandboxes: `kubectl delete pods --all -n xgen-sandboxes` |
+| Sandbox stays in `starting` | Sidecar readiness probe failing | Check sidecar logs: `kubectl logs sbx-<id> -n xgen-sandboxes -c sidecar` |
 | `401 Unauthorized` | Wrong API key | Use `xgen_dev_key` (default dev key) |
 | `429 Too Many Requests` | Rate limit hit | Wait 1 minute (120 req/min limit) |
-| `exec` returns empty stdout | Sandbox not yet `running` | Poll `GET /api/v1/sandboxes/{id}` until status is `running` |
+| `exec` returns empty stdout | SDK not showing errors | Test with curl: `./scripts/debug-sandbox.sh exec <id> echo hello` |
 | Kind cluster not found | Cluster deleted or not created | Run `make dev-cluster` |
 | Helm install fails | Namespace conflict | Run `make dev-teardown` then `make dev-cluster` |
 
@@ -599,8 +720,17 @@ curl -s -X POST http://localhost:8080/api/v1/sandboxes \
 # Agent logs (follow mode)
 kubectl logs -n xgen-system deployment/xgen-agent -f
 
+# Sidecar logs (shows WS connections, message flow, exec errors)
+kubectl logs sbx-<id> -n xgen-sandboxes -c sidecar -f
+
+# Runtime container logs
+kubectl logs sbx-<id> -n xgen-sandboxes -c runtime
+
+# Check sidecar capabilities (verify SYS_ADMIN is present)
+kubectl exec -n xgen-sandboxes sbx-<id> -c sidecar -- cat /proc/1/status | grep Cap
+
 # Describe a stuck pod
-kubectl describe pod <pod-name> -n xgen-sandboxes
+kubectl describe pod sbx-<id> -n xgen-sandboxes
 
 # Check all resources in sandbox namespace
 kubectl get all -n xgen-sandboxes
