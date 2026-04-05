@@ -13,7 +13,7 @@ import { XgenClient } from "@xgen-sandbox/sdk";
 
 const client = new XgenClient({
   apiKey: process.env.API_KEY ?? "xgen_dev_key",
-  agentUrl: process.env.AGENT_URL ?? "http://localhost:8000",
+  agentUrl: process.env.AGENT_URL ?? "http://localhost:8080",
 });
 
 async function main() {

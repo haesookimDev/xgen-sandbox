@@ -5,8 +5,6 @@ import (
 	"io"
 	"os"
 	"os/exec"
-	"path/filepath"
-	"strings"
 	"sync"
 	"syscall"
 
@@ -52,54 +50,15 @@ func NewManager() *Manager {
 	}
 }
 
-// findRuntimePID finds the PID of the runtime container's init process ("sleep infinity").
-func findRuntimePID() (string, error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return "", fmt.Errorf("read /proc: %w", err)
-	}
-	for _, e := range entries {
-		if !e.IsDir() {
-			continue
-		}
-		// Skip non-numeric entries
-		if e.Name()[0] < '1' || e.Name()[0] > '9' {
-			continue
-		}
-		cmdline, err := os.ReadFile(filepath.Join("/proc", e.Name(), "cmdline"))
-		if err != nil {
-			continue
-		}
-		// cmdline uses null bytes as separators: "sleep\x00infinity"
-		if strings.Contains(string(cmdline), "sleep\x00infinity") {
-			return e.Name(), nil
-		}
-	}
-	return "", fmt.Errorf("runtime container process not found")
-}
-
 // Start launches a new process and returns it.
-// Commands are executed inside the runtime container's namespace via nsenter.
 func (m *Manager) Start(opts StartOptions) (*Process, error) {
-	runtimePID, err := findRuntimePID()
-	if err != nil {
-		return nil, fmt.Errorf("find runtime container: %w", err)
-	}
+	cmd := exec.Command(opts.Command, opts.Args...)
 
-	// Build nsenter command to enter the runtime container's mount and PID namespace
-	cwd := opts.Cwd
-	if cwd == "" {
-		cwd = "/home/sandbox/workspace"
+	if opts.Cwd != "" {
+		cmd.Dir = opts.Cwd
+	} else {
+		cmd.Dir = "/home/sandbox/workspace"
 	}
-	nsenterArgs := []string{
-		"--target", runtimePID,
-		"--mount",
-		"--wd", cwd,
-		"--",
-	}
-	nsenterArgs = append(nsenterArgs, opts.Command)
-	nsenterArgs = append(nsenterArgs, opts.Args...)
-	cmd := exec.Command("nsenter", nsenterArgs...)
 
 	cmd.Env = os.Environ()
 	for k, v := range opts.Env {

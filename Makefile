@@ -13,12 +13,12 @@ build-sidecar:
 	cd sidecar && go build -o ../bin/sidecar ./cmd/sidecar
 
 build-images:
-	docker build -t ghcr.io/xgen-sandbox/agent:latest ./agent
-	docker build -t ghcr.io/xgen-sandbox/sidecar:latest ./sidecar
-	docker build -t ghcr.io/xgen-sandbox/runtime-base:latest ./runtime/base
-	docker build -t ghcr.io/xgen-sandbox/runtime-nodejs:latest ./runtime/nodejs
-	docker build -t ghcr.io/xgen-sandbox/runtime-python:latest ./runtime/python
-	docker build -t ghcr.io/xgen-sandbox/runtime-gui:latest ./runtime/gui
+	docker build -t ghcr.io/xgen-sandbox/agent:latest ./agent --no-cache
+	docker build -t ghcr.io/xgen-sandbox/sidecar:latest ./sidecar --no-cache
+	docker build -t ghcr.io/xgen-sandbox/runtime-base:latest ./runtime/base --no-cache
+	docker build -t ghcr.io/xgen-sandbox/runtime-nodejs:latest ./runtime/nodejs --no-cache
+	docker build -t ghcr.io/xgen-sandbox/runtime-python:latest ./runtime/python --no-cache
+	docker build -t ghcr.io/xgen-sandbox/runtime-gui:latest ./runtime/gui --no-cache
 
 build-sdk:
 	cd sdks/typescript && npm install && npm run build
