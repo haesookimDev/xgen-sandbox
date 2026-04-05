@@ -1,0 +1,5 @@
+{
+  "dependencies": {
+    "@xgen-sandbox/sdk": "file:../../sdks/typescript"
+  }
+}

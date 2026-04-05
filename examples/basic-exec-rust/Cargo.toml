@@ -1,0 +1,8 @@
+[package]
+name = "basic-exec-rust"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+xgen-sandbox = { path = "../../sdks/rust" }
+tokio = { version = "1", features = ["full"] }
