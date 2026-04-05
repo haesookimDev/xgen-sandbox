@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /sidecar ./cmd/sidecar
 
 FROM alpine:3.19
 
-RUN apk add --no-cache ca-certificates bash
+RUN apk add --no-cache ca-certificates bash util-linux
 COPY --from=builder /sidecar /usr/local/bin/sidecar
 
 USER 1000:1000
