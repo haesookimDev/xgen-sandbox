@@ -10,5 +10,7 @@ node_modules/
 *.log
 .DS_Store
 
+.claude/
+
 **/rust/target/
 **/__pycache__/**
