@@ -13,6 +13,7 @@ import (
 	"k8s.io/client-go/kubernetes/fake"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
+	"github.com/xgen-sandbox/agent/internal/audit"
 	"github.com/xgen-sandbox/agent/internal/auth"
 	"github.com/xgen-sandbox/agent/internal/config"
 	k8spkg "github.com/xgen-sandbox/agent/internal/k8s"
@@ -43,7 +44,8 @@ func newTestServer() (*Server, *auth.Authenticator) {
 	router := proxy.NewRouter(cfg.PreviewDomain, sandboxMgr)
 	logger := slog.Default()
 
-	srv := NewServer(cfg, logger, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, router)
+	auditStore := audit.NewStore(100)
+	srv := NewServer(cfg, logger, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, router, auditStore)
 	return srv, authenticator
 }
 

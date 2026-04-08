@@ -1,4 +1,4 @@
-.PHONY: all build build-agent build-sidecar build-images dev-cluster dev-deploy dev-teardown test lint
+.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint
 
 # --- Build ---
 
@@ -19,6 +19,10 @@ build-images:
 	docker build -t ghcr.io/xgen-sandbox/runtime-nodejs:latest ./runtime/nodejs
 	docker build -t ghcr.io/xgen-sandbox/runtime-python:latest ./runtime/python
 	docker build -t ghcr.io/xgen-sandbox/runtime-gui:latest ./runtime/gui
+	docker build -t ghcr.io/xgen-sandbox/dashboard:latest ./dashboard
+
+build-dashboard:
+	cd dashboard && npm install && npm run build
 
 build-sdk:
 	cd sdks/typescript && npm install && npm run build
@@ -41,6 +45,9 @@ dev-deploy:
 		--set sidecar.image.pullPolicy=Never \
 		--set sandbox.imagePullPolicy=Never \
 		--set agent.service.type=NodePort
+
+dev-dashboard:
+	cd dashboard && npm run dev
 
 dev-teardown:
 	kind delete cluster --name xgen-sandbox

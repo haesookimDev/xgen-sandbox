@@ -1,0 +1,67 @@
+{{- if .Values.monitoring.prometheusRule.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: xgen-sandbox-alerts
+  namespace: xgen-system
+  labels:
+    app: xgen-agent
+    {{- with .Values.monitoring.prometheusRule.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  groups:
+    - name: xgen-sandbox
+      rules:
+        - alert: XgenHighActiveSandboxes
+          expr: xgen_sandboxes_active > {{ .Values.monitoring.prometheusRule.rules.highActiveSandboxes }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High number of active sandboxes"
+            description: "Active sandbox count ({{ "{{" }} $value {{ "}}" }}) exceeds threshold of {{ .Values.monitoring.prometheusRule.rules.highActiveSandboxes }}."
+
+        - alert: XgenHighErrorRate
+          expr: |
+            (
+              sum(rate(xgen_http_requests_total{status=~"5.."}[5m]))
+              /
+              sum(rate(xgen_http_requests_total[5m]))
+            ) * 100 > {{ .Values.monitoring.prometheusRule.rules.highErrorRatePercent }}
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "High HTTP error rate"
+            description: "HTTP 5xx error rate ({{ "{{" }} $value | printf \"%.1f\" {{ "}}" }}%) exceeds {{ .Values.monitoring.prometheusRule.rules.highErrorRatePercent }}%."
+
+        - alert: XgenHighLatency
+          expr: |
+            histogram_quantile(0.99, sum(rate(xgen_http_request_duration_seconds_bucket[5m])) by (le))
+            > {{ .Values.monitoring.prometheusRule.rules.highLatencySeconds }}
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High API latency"
+            description: "P99 latency ({{ "{{" }} $value | printf \"%.2f\" {{ "}}" }}s) exceeds {{ .Values.monitoring.prometheusRule.rules.highLatencySeconds }}s."
+
+        - alert: XgenWarmPoolDepleted
+          expr: xgen_warm_pool_available == 0 and xgen_warm_pool_target > 0
+          for: 2m
+          labels:
+            severity: warning
+          annotations:
+            summary: "Warm pool depleted"
+            description: "Warm pool for template {{ "{{" }} $labels.template {{ "}}" }} has no available pods."
+
+        - alert: XgenAgentDown
+          expr: up{job="xgen-agent"} == 0
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "xgen-sandbox agent is down"
+            description: "The xgen-sandbox agent has been unreachable for more than 1 minute."
+{{- end }}

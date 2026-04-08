@@ -44,6 +44,72 @@ var (
 		Name:      "sandbox_delete_total",
 		Help:      "Total sandboxes deleted.",
 	})
+
+	// Warm Pool metrics
+	WarmPoolAvailable = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "xgen",
+		Name:      "warm_pool_available",
+		Help:      "Number of available warm pods per template.",
+	}, []string{"template"})
+
+	WarmPoolTarget = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "xgen",
+		Name:      "warm_pool_target",
+		Help:      "Target warm pool size per template.",
+	}, []string{"template"})
+
+	WarmPoolClaimsTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "xgen",
+		Name:      "warm_pool_claims_total",
+		Help:      "Total warm pool pod claims.",
+	})
+
+	WarmPoolReplenishFailures = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "xgen",
+		Name:      "warm_pool_replenish_failures_total",
+		Help:      "Total warm pool replenish failures.",
+	})
+
+	// WebSocket metrics
+	WsConnectionsActive = promauto.NewGauge(prometheus.GaugeOpts{
+		Namespace: "xgen",
+		Name:      "ws_connections_active",
+		Help:      "Number of active WebSocket connections.",
+	})
+
+	// Auth metrics
+	AuthTokenGeneratedTotal = promauto.NewCounter(prometheus.CounterOpts{
+		Namespace: "xgen",
+		Name:      "auth_token_generated_total",
+		Help:      "Total JWT tokens generated.",
+	})
+
+	AuthFailuresTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "xgen",
+		Name:      "auth_failures_total",
+		Help:      "Total authentication failures by reason.",
+	}, []string{"reason"})
+
+	// Pod lifecycle metrics
+	SandboxPodCreateDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Namespace: "xgen",
+		Name:      "sandbox_pod_create_duration_seconds",
+		Help:      "Duration of sandbox pod creation in seconds.",
+		Buckets:   []float64{0.1, 0.5, 1, 2, 5, 10, 30},
+	})
+
+	// Sandbox breakdown metrics
+	SandboxesByTemplate = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "xgen",
+		Name:      "sandboxes_by_template",
+		Help:      "Active sandboxes by template.",
+	}, []string{"template"})
+
+	SandboxesByStatus = promauto.NewGaugeVec(prometheus.GaugeOpts{
+		Namespace: "xgen",
+		Name:      "sandboxes_by_status",
+		Help:      "Sandboxes by status.",
+	}, []string{"status"})
 )
 
 // metricsMiddleware records HTTP request metrics.

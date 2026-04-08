@@ -12,6 +12,7 @@ import (
 	"time"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
+	"github.com/xgen-sandbox/agent/internal/audit"
 	"github.com/xgen-sandbox/agent/internal/auth"
 	"github.com/xgen-sandbox/agent/internal/config"
 	k8spkg "github.com/xgen-sandbox/agent/internal/k8s"
@@ -86,6 +87,7 @@ func main() {
 	}
 
 	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize)
+	auditStore := audit.NewStore(1000)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -130,7 +132,7 @@ func main() {
 	// Start warm pool
 	warmPool.Start(ctx)
 
-	srv := server.NewServer(cfg, logger, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, previewRouter)
+	srv := server.NewServer(cfg, logger, authenticator, sandboxMgr, podMgr, warmPool, wsProxy, previewRouter, auditStore)
 
 	httpServer := &http.Server{
 		Addr:    cfg.ListenAddr,

@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
+	"github.com/xgen-sandbox/agent/internal/audit"
 	"github.com/xgen-sandbox/agent/internal/auth"
 	"github.com/xgen-sandbox/agent/internal/config"
 	k8spkg "github.com/xgen-sandbox/agent/internal/k8s"
@@ -32,6 +33,7 @@ type Server struct {
 	warmPool   *k8spkg.WarmPool
 	wsProxy    *proxy.WSProxy
 	router     *proxy.Router
+	auditStore *audit.Store
 }
 
 // NewServer creates a new HTTP server.
@@ -44,6 +46,7 @@ func NewServer(
 	warmPool *k8spkg.WarmPool,
 	wsProxy *proxy.WSProxy,
 	previewRouter *proxy.Router,
+	auditStore *audit.Store,
 ) *Server {
 	return &Server{
 		cfg:        cfg,
@@ -54,6 +57,7 @@ func NewServer(
 		warmPool:   warmPool,
 		wsProxy:    wsProxy,
 		router:     previewRouter,
+		auditStore: auditStore,
 	}
 }
 
@@ -102,7 +106,7 @@ func (s *Server) apiHandler() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(RateLimitMiddleware(120)) // 120 requests/min per client
 		r.Use(s.auth.Middleware)
-		r.Use(auditLog(s.logger))
+		r.Use(auditLog(s.logger, s.auditStore))
 
 		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
 			Post("/api/v1/sandboxes", s.handleCreateSandbox)
@@ -120,6 +124,15 @@ func (s *Server) apiHandler() http.Handler {
 			Get("/api/v1/sandboxes/{id}/ws", s.handleWS)
 		r.With(auth.RequirePermission(auth.PermSandboxRead)).
 			Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
+
+		// Admin-only routes
+		r.Route("/api/v1/admin", func(r chi.Router) {
+			r.Use(auth.RequireRole(auth.RoleAdmin))
+			r.Get("/summary", s.handleAdminSummary)
+			r.Get("/metrics", s.handleAdminMetrics)
+			r.Get("/audit-logs", s.handleAdminAuditLogs)
+			r.Get("/warm-pool", s.handleAdminWarmPool)
+		})
 	})
 
 	return r
@@ -136,10 +149,12 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 
 	token, expiresAt, err := s.auth.GenerateToken(req.APIKey)
 	if err != nil {
+		AuthFailuresTotal.WithLabelValues("invalid_api_key").Inc()
 		writeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 
+	AuthTokenGeneratedTotal.Inc()
 	writeJSON(w, http.StatusOK, v1.AuthTokenResponse{
 		Token:     token,
 		ExpiresAt: expiresAt,
@@ -170,24 +185,34 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	sbx := s.sandboxMgr.Create(req.Template, timeout, req.Ports, req.GUI, req.Env, req.Metadata)
 	sandboxCreateTotal.Inc()
 	sandboxesActive.Inc()
+	SandboxesByTemplate.WithLabelValues(req.Template).Inc()
+	SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Inc()
 
 	// Try warm pool first, fall back to creating a new pod
+	podCreateStart := time.Now()
 	if warmID := s.warmPool.Claim(req.Template); warmID != "" {
+		WarmPoolClaimsTotal.Inc()
+		WarmPoolAvailable.WithLabelValues(req.Template).Dec()
 		// Reuse warm pod: remap the warm pod's info to our new sandbox ID
 		if info, ok := s.podMgr.GetPodInfo(warmID); ok {
 			s.podMgr.RemapPod(warmID, sbx.ID)
 			s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
 			s.sandboxMgr.SetStatus(sbx.ID, "running")
+			SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
 			log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
 			go s.warmPool.Replenish(context.Background(), req.Template)
 		}
 	} else {
 		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI); err != nil {
 			s.sandboxMgr.Remove(sbx.ID)
+			sandboxesActive.Dec()
+			SandboxesByTemplate.WithLabelValues(req.Template).Dec()
+			SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Dec()
 			log.Printf("create pod error: %v", err)
 			writeError(w, http.StatusInternalServerError, "failed to create sandbox")
 			return
 		}
+		SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
 	}
 
 	// Build preview URLs
@@ -239,6 +264,12 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 
 	if err := s.podMgr.DeletePod(r.Context(), id); err != nil {
 		log.Printf("delete pod error: %v", err)
+	}
+
+	// Get sandbox info before removal for metrics
+	if sbx, err := s.sandboxMgr.Get(id); err == nil {
+		SandboxesByTemplate.WithLabelValues(sbx.Template).Dec()
+		SandboxesByStatus.WithLabelValues(string(sbx.Status)).Dec()
 	}
 
 	s.wsProxy.DisconnectSidecar(id)

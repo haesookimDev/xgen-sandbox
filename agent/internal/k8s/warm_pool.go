@@ -106,3 +106,34 @@ func (wp *WarmPool) Size(template string) int {
 	defer wp.mu.Unlock()
 	return len(wp.pool[template])
 }
+
+// WarmPoolDetail holds the status of a single template's warm pool.
+type WarmPoolDetail struct {
+	Available int
+	Target    int
+}
+
+// Status returns the current warm pool state for all templates.
+func (wp *WarmPool) Status() map[string]WarmPoolDetail {
+	wp.mu.Lock()
+	defer wp.mu.Unlock()
+
+	result := make(map[string]WarmPoolDetail)
+	// Include all default templates
+	for _, tmpl := range wp.defaults {
+		result[tmpl] = WarmPoolDetail{
+			Available: len(wp.pool[tmpl]),
+			Target:    wp.size,
+		}
+	}
+	// Include any additional templates that have pods
+	for tmpl, ids := range wp.pool {
+		if _, ok := result[tmpl]; !ok {
+			result[tmpl] = WarmPoolDetail{
+				Available: len(ids),
+				Target:    wp.size,
+			}
+		}
+	}
+	return result
+}

@@ -77,3 +77,53 @@ type AuthTokenResponse struct {
 	Token     string    `json:"token"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
+
+// --- Admin API Types ---
+
+// AdminSummaryResponse is the response body for GET /api/v1/admin/summary.
+type AdminSummaryResponse struct {
+	ActiveSandboxes     int                    `json:"active_sandboxes"`
+	WarmPool            map[string]WarmPoolInfo `json:"warm_pool"`
+	SandboxesByStatus   map[string]int         `json:"sandboxes_by_status"`
+	SandboxesByTemplate map[string]int         `json:"sandboxes_by_template"`
+}
+
+// WarmPoolInfo represents the state of a warm pool for a template.
+type WarmPoolInfo struct {
+	Available int `json:"available"`
+	Target    int `json:"target"`
+}
+
+// AdminMetricsResponse is the response body for GET /api/v1/admin/metrics.
+type AdminMetricsResponse struct {
+	ActiveSandboxes float64 `json:"active_sandboxes"`
+}
+
+// AdminWarmPoolResponse is the response body for GET /api/v1/admin/warm-pool.
+type AdminWarmPoolResponse struct {
+	Pools []WarmPoolDetail `json:"pools"`
+}
+
+// WarmPoolDetail represents detailed warm pool state for a single template.
+type WarmPoolDetail struct {
+	Template  string `json:"template"`
+	Available int    `json:"available"`
+	Target    int    `json:"target"`
+}
+
+// AdminAuditLogsResponse is the response body for GET /api/v1/admin/audit-logs.
+type AdminAuditLogsResponse struct {
+	Entries []AuditEntry `json:"entries"`
+	Total   int          `json:"total"`
+}
+
+// AuditEntry represents a single audit log entry.
+type AuditEntry struct {
+	Timestamp time.Time `json:"timestamp"`
+	Action    string    `json:"action"`
+	Subject   string    `json:"subject"`
+	Role      string    `json:"role"`
+	Status    int       `json:"status"`
+	RemoteIP  string    `json:"remote_ip"`
+	SandboxID string    `json:"sandbox_id,omitempty"`
+}

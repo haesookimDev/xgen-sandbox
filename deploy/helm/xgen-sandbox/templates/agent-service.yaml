@@ -3,6 +3,10 @@ kind: Service
 metadata:
   name: xgen-agent
   namespace: xgen-system
+  annotations:
+    prometheus.io/scrape: "true"
+    prometheus.io/port: "{{ .Values.agent.service.port }}"
+    prometheus.io/path: "/metrics"
 spec:
   type: {{ .Values.agent.service.type }}
   ports:

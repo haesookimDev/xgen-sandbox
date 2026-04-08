@@ -1,0 +1,13 @@
+{{- if .Values.monitoring.grafana.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: xgen-sandbox-grafana-dashboard
+  namespace: xgen-system
+  labels:
+    app: xgen-agent
+    {{ .Values.monitoring.grafana.dashboardLabel }}: {{ .Values.monitoring.grafana.dashboardLabelValue | quote }}
+data:
+  xgen-sandbox-overview.json: |-
+    {{- .Files.Get "dashboards/xgen-sandbox-overview.json" | nindent 4 }}
+{{- end }}

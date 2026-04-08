@@ -1,0 +1,17 @@
+{{- if .Values.dashboard.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: xgen-dashboard
+  namespace: xgen-system
+  labels:
+    app: xgen-dashboard
+spec:
+  type: {{ .Values.dashboard.service.type }}
+  ports:
+    - name: http
+      port: {{ .Values.dashboard.service.port }}
+      targetPort: http
+  selector:
+    app: xgen-dashboard
+{{- end }}

@@ -59,3 +59,34 @@ autoscaling:
 podDisruptionBudget:
   enabled: false
   minAvailable: 1
+
+monitoring:
+  serviceMonitor:
+    enabled: false
+    interval: 15s
+    scrapeTimeout: 10s
+    labels: {}
+  prometheusRule:
+    enabled: false
+    labels: {}
+    rules:
+      highActiveSandboxes: 40
+      highErrorRatePercent: 5
+      highLatencySeconds: 5
+  grafana:
+    enabled: false
+    dashboardLabel: grafana_dashboard
+    dashboardLabelValue: "1"
+
+dashboard:
+  enabled: false
+  image:
+    repository: ghcr.io/xgen-sandbox/dashboard
+    tag: latest
+    pullPolicy: IfNotPresent
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 3000
+  env:
+    AGENT_URL: "http://xgen-agent.xgen-system:8080"

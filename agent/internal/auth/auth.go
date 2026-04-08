@@ -35,6 +35,7 @@ const (
 	PermSandboxDelete Permission = "sandbox:delete"
 	PermSandboxExec   Permission = "sandbox:exec"
 	PermSandboxFiles  Permission = "sandbox:files"
+	PermAdminRead     Permission = "admin:read"
 )
 
 // rolePermissions maps each role to its allowed permissions.
@@ -42,6 +43,7 @@ var rolePermissions = map[Role][]Permission{
 	RoleAdmin: {
 		PermSandboxCreate, PermSandboxRead, PermSandboxWrite,
 		PermSandboxDelete, PermSandboxExec, PermSandboxFiles,
+		PermAdminRead,
 	},
 	RoleUser: {
 		PermSandboxCreate, PermSandboxRead, PermSandboxWrite,
@@ -227,6 +229,24 @@ func RequirePermission(perm Permission) func(http.Handler) http.Handler {
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(r.Context()))
+		})
+	}
+}
+
+// RequireRole returns middleware that checks for a specific role.
+func RequireRole(role Role) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			claims := GetClaims(r.Context())
+			if claims == nil {
+				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
+				return
+			}
+			if claims.Role != role {
+				http.Error(w, `{"error":"forbidden","code":"insufficient_role"}`, http.StatusForbidden)
+				return
+			}
+			next.ServeHTTP(w, r)
 		})
 	}
 }

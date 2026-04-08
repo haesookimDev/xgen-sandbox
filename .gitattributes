@@ -1,0 +1,2 @@
+# Exclude CI/CD workflows from git archive (GitHub "Download ZIP")
+.github/ export-ignore
