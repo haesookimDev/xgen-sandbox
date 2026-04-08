@@ -40,6 +40,19 @@ type PodManager struct {
 	onReady func(sandboxID string)
 }
 
+// NewPodManagerWithClient creates a PodManager with an injected Kubernetes client (for testing).
+func NewPodManagerWithClient(client kubernetes.Interface, namespace, sidecarImage, runtimeImage string, pullPolicy corev1.PullPolicy, onReady func(string)) *PodManager {
+	return &PodManager{
+		client:     client,
+		namespace:  namespace,
+		sidecar:    sidecarImage,
+		runtime:    runtimeImage,
+		pullPolicy: pullPolicy,
+		pods:       make(map[string]*PodInfo),
+		onReady:    onReady,
+	}
+}
+
 // NewPodManager creates a new PodManager.
 func NewPodManager(namespace, sidecarImage, runtimeImage, imagePullPolicy string, onReady func(string)) (*PodManager, error) {
 	config, err := rest.InClusterConfig()
