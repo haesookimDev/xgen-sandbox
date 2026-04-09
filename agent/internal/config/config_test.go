@@ -40,8 +40,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.WarmPoolSize != 0 {
 		t.Errorf("WarmPoolSize: expected 0, got %d", cfg.WarmPoolSize)
 	}
-	if cfg.APIKey != "xgen_dev_key" {
-		t.Errorf("APIKey: expected xgen_dev_key, got %q", cfg.APIKey)
+	if cfg.APIKey != "" {
+		t.Errorf("APIKey: expected empty string (no default), got %q", cfg.APIKey)
+	}
+	if cfg.JWTSecret != "" {
+		t.Errorf("JWTSecret: expected empty string (no default), got %q", cfg.JWTSecret)
 	}
 }
 
@@ -125,5 +128,31 @@ func TestEnvDurationOrDefault(t *testing.T) {
 	}
 	if v := envDurationOrDefault("TEST_DUR_MISSING_12345", 2*time.Hour); v != 2*time.Hour {
 		t.Errorf("expected 2h (fallback), got %v", v)
+	}
+}
+
+func TestValidate_EmptySecrets(t *testing.T) {
+	cfg := &Config{JWTSecret: "", APIKey: ""}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for empty secrets")
+	}
+}
+
+func TestValidate_InsecureDefaults(t *testing.T) {
+	cfg := &Config{JWTSecret: "xgen-dev-jwt-secret-change-in-production", APIKey: "some-key"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for insecure JWT secret")
+	}
+
+	cfg = &Config{JWTSecret: "secure-secret-32-bytes-long!!!!!", APIKey: "xgen_dev_key"}
+	if err := cfg.Validate(); err == nil {
+		t.Error("expected error for insecure API key")
+	}
+}
+
+func TestValidate_SecureConfig(t *testing.T) {
+	cfg := &Config{JWTSecret: "my-production-secret-key-here!!!", APIKey: "prod-api-key-12345"}
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("expected no error for secure config, got: %v", err)
 	}
 }

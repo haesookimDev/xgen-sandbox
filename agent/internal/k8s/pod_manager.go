@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,7 +133,14 @@ func (pm *PodManager) watchPods(ctx context.Context) {
 				pm.mu.Unlock()
 
 				if ready && !wasReady && pm.onReady != nil {
-					go pm.onReady(sandboxID)
+					go func(id string) {
+						defer func() {
+							if r := recover(); r != nil {
+								log.Printf("onReady panic for sandbox %s: %v", id, r)
+							}
+						}()
+						pm.onReady(id)
+					}(sandboxID)
 				}
 
 			case watch.Deleted:
@@ -156,10 +165,17 @@ func isPodReady(pod *corev1.Pod) bool {
 func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool) error {
 	runtimeImage := pm.runtimeImageForTemplate(template)
 
+	if len(env) > maxEnvVars {
+		return fmt.Errorf("too many environment variables: %d (max %d)", len(env), maxEnvVars)
+	}
+
 	envVars := []corev1.EnvVar{
 		{Name: "SANDBOX_ID", Value: sandboxID},
 	}
 	for k, v := range env {
+		if err := validateEnvVar(k); err != nil {
+			return fmt.Errorf("invalid env var %q: %w", k, err)
+		}
 		envVars = append(envVars, corev1.EnvVar{Name: k, Value: v})
 	}
 
@@ -386,6 +402,39 @@ func (pm *PodManager) runtimeImageForTemplate(template string) string {
 	default:
 		return pm.runtime
 	}
+}
+
+// envVarNamePattern matches valid environment variable names.
+var envVarNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// deniedEnvPrefixes lists prefixes that must not be set by users.
+var deniedEnvPrefixes = []string{
+	"KUBERNETES_",
+	"LD_",
+	"SANDBOX_",
+}
+
+// deniedEnvNames lists exact names that must not be set by users.
+var deniedEnvNames = map[string]bool{
+	"PATH": true, "HOME": true, "USER": true, "SHELL": true,
+}
+
+const maxEnvVars = 50
+
+func validateEnvVar(name string) error {
+	if !envVarNamePattern.MatchString(name) {
+		return fmt.Errorf("invalid name format")
+	}
+	upper := strings.ToUpper(name)
+	if deniedEnvNames[upper] {
+		return fmt.Errorf("reserved environment variable")
+	}
+	for _, prefix := range deniedEnvPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return fmt.Errorf("reserved prefix %s", prefix)
+		}
+	}
+	return nil
 }
 
 func boolPtr(b bool) *bool { return &b }

@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"strconv"
 	"time"
@@ -35,9 +36,34 @@ func Load() *Config {
 		DefaultTimeout:   envDurationOrDefault("DEFAULT_TIMEOUT", 1*time.Hour),
 		MaxTimeout:       envDurationOrDefault("MAX_TIMEOUT", 24*time.Hour),
 		WarmPoolSize:     envIntOrDefault("WARM_POOL_SIZE", 0),
-		APIKey:           envOrDefault("API_KEY", "xgen_dev_key"),
-		JWTSecret:        envOrDefault("JWT_SECRET", "xgen-dev-jwt-secret-change-in-production"),
+		APIKey:           envOrDefault("API_KEY", ""),
+		JWTSecret:        envOrDefault("JWT_SECRET", ""),
 	}
+}
+
+// knownInsecureSecrets contains default dev secrets that must not be used in production.
+var knownInsecureSecrets = []string{
+	"xgen-dev-jwt-secret-change-in-production",
+	"xgen_dev_key",
+}
+
+// Validate checks that critical configuration values are set and secure.
+func (c *Config) Validate() error {
+	if c.JWTSecret == "" {
+		return fmt.Errorf("JWT_SECRET environment variable is required")
+	}
+	if c.APIKey == "" {
+		return fmt.Errorf("API_KEY environment variable is required")
+	}
+	for _, insecure := range knownInsecureSecrets {
+		if c.JWTSecret == insecure {
+			return fmt.Errorf("JWT_SECRET must not use the default dev value")
+		}
+		if c.APIKey == insecure {
+			return fmt.Errorf("API_KEY must not use the default dev value")
+		}
+	}
+	return nil
 }
 
 func envOrDefault(key, fallback string) string {

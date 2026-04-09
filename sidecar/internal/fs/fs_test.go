@@ -201,9 +201,9 @@ func TestHandler_ResolvePath_Escapes(t *testing.T) {
 			// Path rejected by validation -- correct behavior
 			continue
 		}
-		// If no error, the resolved path must still be within root
-		if !isWithinRoot(resolved, root) {
-			t.Errorf("path %q resolved to %q which escapes root %q", p, resolved, root)
+		// If no error, the resolved path must still be within the handler's resolved root
+		if !isWithinRoot(resolved, h.root) {
+			t.Errorf("path %q resolved to %q which escapes root %q", p, resolved, h.root)
 		}
 	}
 }

@@ -16,20 +16,59 @@ type Handler struct {
 }
 
 // NewHandler creates a new filesystem handler with the given root.
+// The root path is resolved via EvalSymlinks so that subsequent path
+// checks work correctly on systems where temp dirs are symlinked.
 func NewHandler(root string) *Handler {
 	if root == "" {
 		root = workspaceRoot
 	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
 	return &Handler{root: root}
 }
 
-// resolvePath ensures the path is within the workspace root.
+// resolvePath ensures the path is within the workspace root,
+// including after symlink resolution.
 func (h *Handler) resolvePath(path string) (string, error) {
 	resolved := filepath.Join(h.root, filepath.Clean("/"+path))
 	if !strings.HasPrefix(resolved, h.root) {
 		return "", fmt.Errorf("path escapes workspace root: %s", path)
 	}
-	return resolved, nil
+
+	// Resolve symlinks and re-check the prefix to prevent symlink traversal.
+	real, err := filepath.EvalSymlinks(resolved)
+	if err != nil {
+		// If the target doesn't exist yet (e.g. new file), walk up to the
+		// first existing ancestor and validate that it stays within root.
+		if os.IsNotExist(err) {
+			ancestor := resolved
+			for {
+				ancestor = filepath.Dir(ancestor)
+				if ancestor == h.root || ancestor == "/" || ancestor == "." {
+					break
+				}
+				realAncestor, aErr := filepath.EvalSymlinks(ancestor)
+				if aErr == nil {
+					if !strings.HasPrefix(realAncestor, h.root) {
+						return "", fmt.Errorf("path escapes workspace root via symlink: %s", path)
+					}
+					return resolved, nil
+				}
+				if !os.IsNotExist(aErr) {
+					return "", fmt.Errorf("resolve ancestor path: %w", aErr)
+				}
+			}
+			// All ancestors up to root don't exist or we hit root — path is safe.
+			return resolved, nil
+		}
+		return "", fmt.Errorf("resolve path: %w", err)
+	}
+
+	if !strings.HasPrefix(real, h.root) {
+		return "", fmt.Errorf("path escapes workspace root via symlink: %s", path)
+	}
+	return real, nil
 }
 
 // ReadFile reads the contents of a file.
@@ -108,11 +147,12 @@ func (h *Handler) Remove(path string, recursive bool) error {
 	return os.Remove(resolved)
 }
 
-// Stat returns file info.
+// Stat returns file info. Uses Lstat to avoid following symlinks that
+// could point outside the workspace root.
 func (h *Handler) Stat(path string) (fs.FileInfo, error) {
 	resolved, err := h.resolvePath(path)
 	if err != nil {
 		return nil, err
 	}
-	return os.Stat(resolved)
+	return os.Lstat(resolved)
 }

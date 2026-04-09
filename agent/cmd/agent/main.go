@@ -30,6 +30,9 @@ func main() {
 	log.Println("xgen-sandbox agent starting...")
 
 	cfg := config.Load()
+	if err := cfg.Validate(); err != nil {
+		log.Fatalf("invalid configuration: %v", err)
+	}
 
 	authenticator := auth.NewAuthenticator(cfg.APIKey, cfg.JWTSecret)
 	sandboxMgr := sandbox.NewManager()

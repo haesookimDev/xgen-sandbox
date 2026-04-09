@@ -56,6 +56,7 @@ func (p *WSProxy) DisconnectSidecar(sandboxID string) {
 }
 
 // HandleClientWS handles a client WebSocket connection and proxies to the sidecar.
+// Each client gets its own dedicated sidecar connection to prevent cascading failures.
 func (p *WSProxy) HandleClientWS(w http.ResponseWriter, r *http.Request, sandboxID string) {
 	sbx, err := p.sandboxMgr.Get(sandboxID)
 	if err != nil {
@@ -78,24 +79,15 @@ func (p *WSProxy) HandleClientWS(w http.ResponseWriter, r *http.Request, sandbox
 	defer clientConn.CloseNow()
 	log.Printf("ws proxy: client connected for sandbox %s", sandboxID)
 
-	// Get or create sidecar connection
-	p.mu.RLock()
-	sidecarConn, ok := p.conns[sandboxID]
-	p.mu.RUnlock()
-
-	if !ok {
-		log.Printf("ws proxy: no existing sidecar conn for %s, connecting...", sandboxID)
-		if err := p.ConnectToSidecar(r.Context(), sandboxID, sbx.PodIP); err != nil {
-			log.Printf("ws proxy: connect to sidecar failed: %v", err)
-			clientConn.Close(websocket.StatusInternalError, "failed to connect to sandbox")
-			return
-		}
-		p.mu.RLock()
-		sidecarConn = p.conns[sandboxID]
-		p.mu.RUnlock()
-	} else {
-		log.Printf("ws proxy: reusing existing sidecar conn for %s", sandboxID)
+	// Create a dedicated sidecar connection for this client session.
+	sidecarURL := fmt.Sprintf("ws://%s:9000/ws", sbx.PodIP)
+	sidecarConn, _, err := websocket.Dial(r.Context(), sidecarURL, nil)
+	if err != nil {
+		log.Printf("ws proxy: connect to sidecar failed for %s: %v", sandboxID, err)
+		clientConn.Close(websocket.StatusInternalError, "failed to connect to sandbox")
+		return
 	}
+	defer sidecarConn.CloseNow()
 
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()

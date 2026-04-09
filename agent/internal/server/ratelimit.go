@@ -8,9 +8,9 @@ import (
 
 // rateLimiter implements a per-key token bucket rate limiter.
 type rateLimiter struct {
-	mu      sync.Mutex
-	buckets map[string]*bucket
-	rate    int           // tokens per interval
+	mu       sync.Mutex
+	buckets  map[string]*bucket
+	rate     int           // tokens per interval
 	interval time.Duration
 }
 
@@ -20,10 +20,28 @@ type bucket struct {
 }
 
 func newRateLimiter(rate int, interval time.Duration) *rateLimiter {
-	return &rateLimiter{
+	rl := &rateLimiter{
 		buckets:  make(map[string]*bucket),
 		rate:     rate,
 		interval: interval,
+	}
+	go rl.cleanup()
+	return rl
+}
+
+// cleanup periodically removes stale buckets to prevent unbounded memory growth.
+func (rl *rateLimiter) cleanup() {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+	for range ticker.C {
+		rl.mu.Lock()
+		now := time.Now()
+		for key, b := range rl.buckets {
+			if now.Sub(b.lastReset) > 2*rl.interval {
+				delete(rl.buckets, key)
+			}
+		}
+		rl.mu.Unlock()
 	}
 }
 

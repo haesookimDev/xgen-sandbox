@@ -40,18 +40,20 @@ func (wp *WarmPool) Start(ctx context.Context) {
 
 // Claim takes a warm pod from the pool for the given template.
 // Returns the warm sandboxID or empty string if none available.
+// Only returns pods that are confirmed ready in the PodManager.
 func (wp *WarmPool) Claim(template string) string {
 	wp.mu.Lock()
 	defer wp.mu.Unlock()
 
 	ids := wp.pool[template]
-	if len(ids) == 0 {
-		return ""
+	for i, id := range ids {
+		info, ok := wp.podMgr.GetPodInfo(id)
+		if ok && info.Ready {
+			wp.pool[template] = append(ids[:i], ids[i+1:]...)
+			return id
+		}
 	}
-
-	id := ids[0]
-	wp.pool[template] = ids[1:]
-	return id
+	return ""
 }
 
 // Replenish creates a replacement pod after one is claimed.

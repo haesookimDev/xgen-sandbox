@@ -15,6 +15,19 @@ func newTestWarmPool(size int) (*WarmPool, *PodManager) {
 	return wp, pm
 }
 
+// registerReady adds a PodInfo entry marked Ready so that Claim can find it.
+func registerReady(pm *PodManager, sandboxID string) {
+	pm.mu.Lock()
+	pm.pods[sandboxID] = &PodInfo{
+		SandboxID: sandboxID,
+		PodName:   "sbx-" + sandboxID,
+		PodIP:     "10.0.0.1",
+		Phase:     corev1.PodRunning,
+		Ready:     true,
+	}
+	pm.mu.Unlock()
+}
+
 func TestWarmPool_ClaimEmpty(t *testing.T) {
 	wp, _ := newTestWarmPool(2)
 	id := wp.Claim("base")
@@ -24,8 +37,9 @@ func TestWarmPool_ClaimEmpty(t *testing.T) {
 }
 
 func TestWarmPool_MarkReadyAndClaim(t *testing.T) {
-	wp, _ := newTestWarmPool(2)
+	wp, pm := newTestWarmPool(2)
 
+	registerReady(pm, "warm-abc")
 	wp.MarkReady("warm-abc", "base")
 
 	id := wp.Claim("base")
@@ -41,8 +55,11 @@ func TestWarmPool_MarkReadyAndClaim(t *testing.T) {
 }
 
 func TestWarmPool_ClaimFIFO(t *testing.T) {
-	wp, _ := newTestWarmPool(3)
+	wp, pm := newTestWarmPool(3)
 
+	for _, id := range []string{"first", "second", "third"} {
+		registerReady(pm, id)
+	}
 	wp.MarkReady("first", "base")
 	wp.MarkReady("second", "base")
 	wp.MarkReady("third", "base")
@@ -59,8 +76,9 @@ func TestWarmPool_ClaimFIFO(t *testing.T) {
 }
 
 func TestWarmPool_IsWarm(t *testing.T) {
-	wp, _ := newTestWarmPool(2)
+	wp, pm := newTestWarmPool(2)
 
+	registerReady(pm, "warm-1")
 	wp.MarkReady("warm-1", "base")
 
 	if !wp.IsWarm("warm-1") {
@@ -102,8 +120,10 @@ func TestWarmPool_Start_SizeZero(t *testing.T) {
 }
 
 func TestWarmPool_ClaimDifferentTemplates(t *testing.T) {
-	wp, _ := newTestWarmPool(2)
+	wp, pm := newTestWarmPool(2)
 
+	registerReady(pm, "node-1")
+	registerReady(pm, "py-1")
 	wp.MarkReady("node-1", "nodejs")
 	wp.MarkReady("py-1", "python")
 

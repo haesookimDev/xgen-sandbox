@@ -12,7 +12,6 @@ import {
   getStoredToken,
   storeToken,
   clearToken,
-  storeApiKey,
 } from "@/lib/auth";
 
 interface AuthContextValue {
@@ -40,7 +39,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (apiKey: string) => {
     const res = await exchangeToken(apiKey);
     storeToken(res.token);
-    storeApiKey(apiKey);
     setToken(res.token);
   }, []);
 

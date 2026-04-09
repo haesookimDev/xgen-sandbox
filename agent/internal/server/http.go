@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
 	"github.com/xgen-sandbox/agent/internal/audit"
@@ -263,7 +264,12 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
 	if err := s.podMgr.DeletePod(r.Context(), id); err != nil {
-		log.Printf("delete pod error: %v", err)
+		if !apierrors.IsNotFound(err) {
+			log.Printf("delete pod error: %v", err)
+			writeError(w, http.StatusInternalServerError, "failed to delete sandbox pod")
+			return
+		}
+		// Pod already gone — proceed with cleanup.
 	}
 
 	// Get sandbox info before removal for metrics
