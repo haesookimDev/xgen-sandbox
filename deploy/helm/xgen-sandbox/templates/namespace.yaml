@@ -4,10 +4,3 @@ metadata:
   name: {{ .Values.sandbox.namespace }}
   labels:
     app.kubernetes.io/managed-by: {{ .Release.Service }}
----
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: xgen-system
-  labels:
-    app.kubernetes.io/managed-by: {{ .Release.Service }}
