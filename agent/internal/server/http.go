@@ -204,7 +204,11 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			go s.warmPool.Replenish(context.Background(), req.Template)
 		}
 	} else {
-		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI); err != nil {
+		var rs *k8spkg.ResourceSpec
+		if req.Resources != nil {
+			rs = &k8spkg.ResourceSpec{CPU: req.Resources.CPU, Memory: req.Resources.Memory}
+		}
+		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI, rs); err != nil {
 			s.sandboxMgr.Remove(sbx.ID)
 			sandboxesActive.Dec()
 			SandboxesByTemplate.WithLabelValues(req.Template).Dec()

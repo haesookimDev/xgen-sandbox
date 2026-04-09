@@ -1,12 +1,18 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
 import { useParams, useRouter } from "next/navigation";
 import { useSandbox, useDeleteSandbox } from "@/hooks/use-sandboxes";
 import { useAuth } from "@/providers/auth-provider";
 import { createApi } from "@/lib/api";
 import { StatusBadge } from "@/components/status-badge";
 import { formatRelativeTime, formatTimeRemaining, cn } from "@/lib/utils";
+
+const SandboxTerminal = dynamic(
+  () => import("@/components/sandbox-terminal").then((m) => m.SandboxTerminal),
+  { ssr: false, loading: () => <p className="text-sm text-muted-foreground p-4">Loading terminal...</p> }
+);
 
 const tabs = ["Info", "Preview", "Terminal"] as const;
 
@@ -169,16 +175,9 @@ export default function SandboxDetailPage() {
         </div>
       )}
 
-      {activeTab === "Terminal" && (
-        <div className="rounded-lg border bg-black p-4">
-          <p className="text-sm text-gray-400">
-            Terminal WebSocket URL:{" "}
-            <code className="text-green-400">{sandbox.ws_url}</code>
-          </p>
-          <p className="mt-2 text-xs text-gray-500">
-            Connect using the @xgen-sandbox/browser SandboxTerminal component or
-            a WebSocket client.
-          </p>
+      {activeTab === "Terminal" && token && sandbox.ws_url && (
+        <div className="rounded-lg border overflow-hidden" style={{ height: "520px" }}>
+          <SandboxTerminal wsUrl={sandbox.ws_url} token={token} />
         </div>
       )}
     </div>

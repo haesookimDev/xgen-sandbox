@@ -161,8 +161,20 @@ func isPodReady(pod *corev1.Pod) bool {
 	return false
 }
 
+// ResourceSpec defines optional resource overrides for a sandbox pod.
+type ResourceSpec struct {
+	CPU    string
+	Memory string
+}
+
+// maxResourceLimits defines the maximum resource values users can request.
+var maxResourceLimits = ResourceSpec{
+	CPU:    "4000m",
+	Memory: "4Gi",
+}
+
 // CreatePod creates a new sandbox pod.
-func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool) error {
+func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool, resources ...*ResourceSpec) error {
 	runtimeImage := pm.runtimeImageForTemplate(template)
 
 	if len(env) > maxEnvVars {
@@ -238,16 +250,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			Command:         []string{"sleep", "infinity"},
 			Env:             envVars,
 			SecurityContext: restrictedSC,
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("250m"),
-					corev1.ResourceMemory: resource.MustParse("256Mi"),
-				},
-				Limits: corev1.ResourceList{
-					corev1.ResourceCPU:    resource.MustParse("1000m"),
-					corev1.ResourceMemory: resource.MustParse("512Mi"),
-				},
-			},
+			Resources:       runtimeResources(resources...),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/home/sandbox/workspace"},
 			},
@@ -435,6 +438,65 @@ func validateEnvVar(name string) error {
 		}
 	}
 	return nil
+}
+
+// runtimeResources returns resource requirements for the runtime container,
+// applying user overrides if provided and capping at max limits.
+func runtimeResources(specs ...*ResourceSpec) corev1.ResourceRequirements {
+	cpuReq := resource.MustParse("250m")
+	cpuLim := resource.MustParse("1000m")
+	memReq := resource.MustParse("256Mi")
+	memLim := resource.MustParse("512Mi")
+	maxCPU := resource.MustParse(maxResourceLimits.CPU)
+	maxMem := resource.MustParse(maxResourceLimits.Memory)
+
+	if len(specs) > 0 && specs[0] != nil {
+		s := specs[0]
+		if s.CPU != "" {
+			if parsed, err := resource.ParseQuantity(s.CPU); err == nil {
+				if parsed.Cmp(maxCPU) <= 0 {
+					cpuLim = parsed
+					// Set request to half of limit, minimum 100m
+					half := parsed.DeepCopy()
+					half.Set(half.Value() / 2)
+					min := resource.MustParse("100m")
+					if half.Cmp(min) < 0 {
+						half = min
+					}
+					cpuReq = half
+				} else {
+					cpuLim = maxCPU
+				}
+			}
+		}
+		if s.Memory != "" {
+			if parsed, err := resource.ParseQuantity(s.Memory); err == nil {
+				if parsed.Cmp(maxMem) <= 0 {
+					memLim = parsed
+					half := parsed.DeepCopy()
+					half.Set(half.Value() / 2)
+					min := resource.MustParse("64Mi")
+					if half.Cmp(min) < 0 {
+						half = min
+					}
+					memReq = half
+				} else {
+					memLim = maxMem
+				}
+			}
+		}
+	}
+
+	return corev1.ResourceRequirements{
+		Requests: corev1.ResourceList{
+			corev1.ResourceCPU:    cpuReq,
+			corev1.ResourceMemory: memReq,
+		},
+		Limits: corev1.ResourceList{
+			corev1.ResourceCPU:    cpuLim,
+			corev1.ResourceMemory: memLim,
+		},
+	}
 }
 
 func boolPtr(b bool) *bool { return &b }

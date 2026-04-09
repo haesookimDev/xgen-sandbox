@@ -16,10 +16,22 @@ spec:
         app: xgen-agent
     spec:
       serviceAccountName: xgen-agent
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65534
+        fsGroup: 65534
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: agent
           image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
           imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - name: http
               containerPort: 8080
@@ -35,9 +47,15 @@ spec:
             - name: PREVIEW_DOMAIN
               value: {{ .Values.agent.env.PREVIEW_DOMAIN }}
             - name: API_KEY
-              value: {{ .Values.agent.env.API_KEY }}
+              valueFrom:
+                secretKeyRef:
+                  name: xgen-agent-secrets
+                  key: API_KEY
             - name: JWT_SECRET
-              value: {{ .Values.agent.env.JWT_SECRET }}
+              valueFrom:
+                secretKeyRef:
+                  name: xgen-agent-secrets
+                  key: JWT_SECRET
             - name: AGENT_EXTERNAL_URL
               value: {{ .Values.agent.env.AGENT_EXTERNAL_URL | default "http://localhost:8080" }}
             - name: DEFAULT_TIMEOUT

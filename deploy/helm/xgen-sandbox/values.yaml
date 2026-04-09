@@ -18,8 +18,10 @@ agent:
   env:
     SANDBOX_NAMESPACE: xgen-sandboxes
     PREVIEW_DOMAIN: preview.localhost:8080
-    API_KEY: xgen_dev_key
-    JWT_SECRET: xgen-dev-jwt-secret-change-in-production
+  secrets:
+    # REQUIRED: Override these in your values-production.yaml or via --set
+    apiKey: ""
+    jwtSecret: ""
 
 sidecar:
   image:
