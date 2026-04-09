@@ -63,7 +63,7 @@ jobs:
         run: cd dashboard && npx tsc --noEmit
 
       - name: Lint
-        run: cd dashboard && npx next lint
+        run: cd dashboard && npx eslint .
 
   sdk-check:
     if: github.repository == 'haesookimDev/xgen-sandbox'
