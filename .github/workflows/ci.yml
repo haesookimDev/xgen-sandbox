@@ -186,7 +186,7 @@ jobs:
         run: echo "REGISTRY_IMAGE=${REGISTRY_IMAGE,,}" >> "$GITHUB_ENV"
 
       - name: Scan agent image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY_IMAGE }}/agent:${{ github.sha }}
           format: table
@@ -194,7 +194,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Scan sidecar image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY_IMAGE }}/sidecar:${{ github.sha }}
           format: table
@@ -202,7 +202,7 @@ jobs:
           severity: CRITICAL,HIGH
 
       - name: Scan dashboard image
-        uses: aquasecurity/trivy-action@v0.28.0
+        uses: aquasecurity/trivy-action@v0.35.0
         with:
           image-ref: ${{ env.REGISTRY_IMAGE }}/dashboard:${{ github.sha }}
           format: table
