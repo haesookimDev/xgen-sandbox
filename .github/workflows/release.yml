@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Extract version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build binaries
+        run: |
+          cd agent && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/agent-linux-amd64 ./cmd/agent
+          cd ../sidecar && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o ../bin/sidecar-linux-amd64 ./cmd/sidecar
+
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Lowercase registry
+        run: echo "REGISTRY_IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+
+      - name: Build and push versioned images
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          for component in agent sidecar dashboard; do
+            docker buildx build \
+              --push \
+              --tag "$REGISTRY_IMAGE/$component:$VERSION" \
+              --tag "$REGISTRY_IMAGE/$component:latest" \
+              --cache-from type=gha \
+              --cache-to type=gha,mode=max \
+              ./$component
+          done
+
+      - name: Build runtime images
+        run: |
+          VERSION=${{ steps.version.outputs.VERSION }}
+          for runtime in base nodejs python gui; do
+            docker buildx build \
+              --push \
+              --tag "$REGISTRY_IMAGE/runtime-$runtime:$VERSION" \
+              --tag "$REGISTRY_IMAGE/runtime-$runtime:latest" \
+              ./runtime/$runtime
+          done
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | head -2 | tail -1)
+          if [ -z "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --oneline --no-decorate)
+          else
+            CHANGELOG=$(git log --oneline --no-decorate "$PREV_TAG"..HEAD)
+          fi
+          echo "CHANGELOG<<EOF" >> "$GITHUB_OUTPUT"
+          echo "$CHANGELOG" >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: |
+            ## Changes
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
+            ## Docker Images
+            ```
+            ghcr.io/${{ github.repository }}/agent:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}/sidecar:${{ steps.version.outputs.VERSION }}
+            ghcr.io/${{ github.repository }}/dashboard:${{ steps.version.outputs.VERSION }}
+            ```
+
+            ## Helm
+            ```
+            helm upgrade --install xgen-sandbox deploy/helm/xgen-sandbox \
+              --set agent.image.tag=${{ steps.version.outputs.VERSION }} \
+              --set sidecar.image.tag=${{ steps.version.outputs.VERSION }}
+            ```
+          files: |
+            bin/agent-linux-amd64
+            bin/sidecar-linux-amd64

@@ -92,6 +92,8 @@ func (s *Server) apiHandler() http.Handler {
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)
 	r.Use(metricsMiddleware)
+	// TODO(#24): Add OpenTelemetry tracing middleware here
+	// r.Use(otelchi.Middleware("xgen-agent"))
 
 	// Health check and metrics (no auth)
 	r.Get("/healthz", func(w http.ResponseWriter, r *http.Request) {

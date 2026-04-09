@@ -2,11 +2,13 @@ package xgen
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/xgen-sandbox/sdk-go/protocol"
 	"github.com/xgen-sandbox/sdk-go/transport"
@@ -101,6 +103,158 @@ func (s *Sandbox) Exec(ctx context.Context, command string, opts ...ExecOption) 
 		return nil, fmt.Errorf("decode exec result: %w", err)
 	}
 	return &result, nil
+}
+
+// ExecStream runs a command and streams events (stdout, stderr, exit) to a channel.
+func (s *Sandbox) ExecStream(ctx context.Context, command string, opts ...ExecOption) (<-chan ExecEvent, error) {
+	cfg := &execConfig{}
+	for _, opt := range opts {
+		opt(cfg)
+	}
+
+	ws, err := s.ensureWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	channel := uint32(time.Now().UnixNano() & 0xFFFFFFFF)
+	ch := make(chan ExecEvent, 64)
+	var cleanups []func()
+
+	cleanups = append(cleanups, ws.On(protocol.ExecStdout, func(env protocol.Envelope) {
+		if env.Channel == channel {
+			ch <- ExecEvent{Type: "stdout", Data: string(env.Payload)}
+		}
+	}))
+	cleanups = append(cleanups, ws.On(protocol.ExecStderr, func(env protocol.Envelope) {
+		if env.Channel == channel {
+			ch <- ExecEvent{Type: "stderr", Data: string(env.Payload)}
+		}
+	}))
+	cleanups = append(cleanups, ws.On(protocol.ExecExit, func(env protocol.Envelope) {
+		if env.Channel == channel {
+			var exit struct {
+				ExitCode int `msgpack:"exitCode"`
+			}
+			_ = protocol.DecodePayload(env.Payload, &exit)
+			ch <- ExecEvent{Type: "exit", ExitCode: exit.ExitCode}
+			for _, c := range cleanups {
+				c()
+			}
+			close(ch)
+		}
+	}))
+
+	parts := strings.Fields(command)
+	payload, err := protocol.EncodePayload(map[string]any{
+		"command": parts[0],
+		"args":    append(parts[1:], cfg.Args...),
+		"env":     cfg.Env,
+		"cwd":     cfg.Cwd,
+		"tty":     false,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ws.Send(ctx, protocol.Envelope{
+		Type: protocol.ExecStart, Channel: channel, ID: 0, Payload: payload,
+	}); err != nil {
+		return nil, err
+	}
+
+	return ch, nil
+}
+
+// Terminal represents an interactive terminal session.
+type Terminal struct {
+	ws       *transport.WSTransport
+	channel  uint32
+	cleanups []func()
+}
+
+// OpenTerminal opens an interactive terminal session.
+func (s *Sandbox) OpenTerminal(ctx context.Context, opts *TerminalOptions) (*Terminal, error) {
+	ws, err := s.ensureWS(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	if opts == nil {
+		opts = &TerminalOptions{}
+	}
+	if opts.Cols == 0 {
+		opts.Cols = 80
+	}
+	if opts.Rows == 0 {
+		opts.Rows = 24
+	}
+
+	channel := uint32(time.Now().UnixNano() & 0xFFFFFFFF)
+
+	payload, err := protocol.EncodePayload(map[string]any{
+		"command": "/bin/bash",
+		"args":    []string{},
+		"env":     opts.Env,
+		"cwd":     opts.Cwd,
+		"tty":     true,
+		"cols":    opts.Cols,
+		"rows":    opts.Rows,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	if err := ws.Send(ctx, protocol.Envelope{
+		Type: protocol.ExecStart, Channel: channel, ID: 0, Payload: payload,
+	}); err != nil {
+		return nil, err
+	}
+
+	return &Terminal{ws: ws, channel: channel}, nil
+}
+
+// Write sends data to terminal stdin.
+func (t *Terminal) Write(data string) error {
+	textBytes := []byte(data)
+	payload := make([]byte, 4+len(textBytes))
+	binary.BigEndian.PutUint32(payload[:4], 0) // process ID placeholder
+	copy(payload[4:], textBytes)
+
+	return t.ws.Send(context.Background(), protocol.Envelope{
+		Type: protocol.ExecStdin, Channel: t.channel, ID: 0, Payload: payload,
+	})
+}
+
+// OnData registers a callback for terminal output.
+func (t *Terminal) OnData(callback func(data string)) CancelFunc {
+	ch := t.channel
+	cleanup := t.ws.On(protocol.ExecStdout, func(env protocol.Envelope) {
+		if env.Channel == ch {
+			callback(string(env.Payload))
+		}
+	})
+	t.cleanups = append(t.cleanups, cleanup)
+	return CancelFunc(cleanup)
+}
+
+// Resize changes the terminal dimensions.
+func (t *Terminal) Resize(cols, rows int) error {
+	payload, err := protocol.EncodePayload(map[string]any{"cols": cols, "rows": rows})
+	if err != nil {
+		return err
+	}
+	return t.ws.Send(context.Background(), protocol.Envelope{
+		Type: protocol.ExecResize, Channel: t.channel, ID: 0, Payload: payload,
+	})
+}
+
+// Close closes the terminal session.
+func (t *Terminal) Close() {
+	for _, c := range t.cleanups {
+		c()
+	}
+	t.cleanups = nil
 }
 
 // ReadFile reads a file from the sandbox and returns its raw bytes.

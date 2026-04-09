@@ -1,0 +1,19 @@
+# Air hot-reload configuration for agent development
+# Install: go install github.com/air-verse/air@latest
+# Usage: cd agent && air -c ../.air.toml
+
+root = "."
+tmp_dir = "tmp"
+
+[build]
+  cmd = "go build -o ./tmp/agent ./cmd/agent"
+  bin = "./tmp/agent"
+  include_ext = ["go"]
+  exclude_dir = ["tmp", "vendor", "test"]
+  delay = 1000
+
+[log]
+  time = false
+
+[misc]
+  clean_on_exit = true

@@ -23,6 +23,8 @@ type FsEvent struct {
 }
 
 // Watcher polls watched paths for filesystem changes.
+// Future improvement: replace polling with fsnotify (inotify on Linux)
+// for lower latency. See https://github.com/fsnotify/fsnotify
 type Watcher struct {
 	root     string
 	mu       sync.RWMutex

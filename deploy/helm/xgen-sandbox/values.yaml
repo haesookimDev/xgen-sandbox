@@ -57,6 +57,7 @@ autoscaling:
   minReplicas: 1
   maxReplicas: 5
   targetCPUUtilization: 70
+  targetMemoryUtilization: 80
 
 podDisruptionBudget:
   enabled: false

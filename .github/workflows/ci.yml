@@ -65,10 +65,37 @@ jobs:
       - name: Lint
         run: cd dashboard && npx next lint
 
+  sdk-check:
+    if: github.repository == 'haesookimDev/xgen-sandbox'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Build TypeScript SDK
+        run: cd sdks/typescript && npm install && npm run build
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Vet Go SDK
+        run: cd sdks/go && go vet ./...
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Check Python SDK
+        run: cd sdks/python && pip install -e ".[dev]" 2>/dev/null || pip install -e . && python -c "import xgen_sandbox; print('Python SDK OK')"
+
   build:
     if: github.repository == 'haesookimDev/xgen-sandbox'
     runs-on: ubuntu-latest
-    needs: [lint, test, dashboard-lint]
+    needs: [lint, test, dashboard-lint, sdk-check]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5

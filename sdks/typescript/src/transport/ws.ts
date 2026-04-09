@@ -22,6 +22,7 @@ export class WsTransport {
   private maxReconnectAttempts = 5;
   private connected = false;
   private connectPromise: Promise<void> | null = null;
+  private intentionallyClosed = false;
 
   constructor(url: string, token: string) {
     this.url = url;
@@ -59,6 +60,7 @@ export class WsTransport {
       this.ws.on("close", () => {
         this.connected = false;
         this.connectPromise = null;
+        this.attemptReconnect();
       });
 
       this.ws.on("error", (err) => {
@@ -73,6 +75,7 @@ export class WsTransport {
   }
 
   close(): void {
+    this.intentionallyClosed = true;
     if (this.ws) {
       this.ws.close();
       this.ws = null;
@@ -177,5 +180,20 @@ export class WsTransport {
         handler(envelope);
       }
     }
+  }
+
+  private attemptReconnect(): void {
+    if (this.intentionallyClosed) return;
+    if (this.reconnectAttempts >= this.maxReconnectAttempts) return;
+
+    this.reconnectAttempts++;
+    const delay = Math.min(1000 * Math.pow(2, this.reconnectAttempts - 1), 30_000);
+
+    setTimeout(() => {
+      if (this.intentionallyClosed || this.connected) return;
+      this.connect().catch(() => {
+        // connect() failure will trigger another close event, which retries
+      });
+    }, delay);
   }
 }

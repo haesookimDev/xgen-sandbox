@@ -1,5 +1,5 @@
 from .client import XgenClient
-from .sandbox import Sandbox
+from .sandbox import Sandbox, Terminal
 from .types import (
     SandboxInfo,
     SandboxStatus,
@@ -15,6 +15,7 @@ from .types import (
 __all__ = [
     "XgenClient",
     "Sandbox",
+    "Terminal",
     "SandboxInfo",
     "SandboxStatus",
     "CreateSandboxOptions",

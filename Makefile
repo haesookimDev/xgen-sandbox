@@ -86,3 +86,8 @@ lint: ## Run Go vet on agent and sidecar
 tidy: ## Run go mod tidy for agent and sidecar
 	cd agent && go mod tidy
 	cd sidecar && go mod tidy
+
+# --- Hot Reload Development ---
+
+dev-agent: ## Run agent with hot reload (requires: go install github.com/air-verse/air@latest)
+	cd agent && air -c ../.air.toml 2>/dev/null || go run ./cmd/agent

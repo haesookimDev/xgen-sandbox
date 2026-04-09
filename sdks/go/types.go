@@ -93,6 +93,21 @@ type FileEvent struct {
 	Type string `json:"type" msgpack:"type"` // "created", "modified", "deleted"
 }
 
+// ExecEvent represents a streaming execution event.
+type ExecEvent struct {
+	Type     string // "stdout", "stderr", "exit"
+	Data     string
+	ExitCode int
+}
+
+// TerminalOptions configures an interactive terminal session.
+type TerminalOptions struct {
+	Cols int
+	Rows int
+	Env  map[string]string
+	Cwd  string
+}
+
 // CancelFunc is returned by event-watching methods to stop listening.
 type CancelFunc func()
 

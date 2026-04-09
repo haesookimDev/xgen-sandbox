@@ -18,7 +18,7 @@ MessageHandler = Callable[[Envelope], None]
 
 
 class WsTransport:
-    def __init__(self, url: str, token: str) -> None:
+    def __init__(self, url: str, token: str, max_reconnect_attempts: int = 5) -> None:
         self._url = url
         self._token = token
         self._ws: websockets.asyncio.client.ClientConnection | None = None
@@ -27,6 +27,9 @@ class WsTransport:
         self._next_id = 1
         self._connected = False
         self._recv_task: asyncio.Task | None = None
+        self._intentionally_closed = False
+        self._reconnect_attempts = 0
+        self._max_reconnect_attempts = max_reconnect_attempts
 
     async def connect(self) -> None:
         if self._connected:
@@ -34,9 +37,12 @@ class WsTransport:
         ws_url = f"{self._url}?{urlencode({'token': self._token})}"
         self._ws = await websockets.asyncio.client.connect(ws_url)
         self._connected = True
+        self._reconnect_attempts = 0
+        self._intentionally_closed = False
         self._recv_task = asyncio.get_event_loop().create_task(self._recv_loop())
 
     def close(self) -> None:
+        self._intentionally_closed = True
         self._connected = False
         if self._recv_task and not self._recv_task.done():
             self._recv_task.cancel()
@@ -109,9 +115,10 @@ class WsTransport:
         except websockets.exceptions.ConnectionClosed:
             pass
         except asyncio.CancelledError:
-            pass
+            return  # intentional cancellation, don't reconnect
         finally:
             self._connected = False
+            asyncio.ensure_future(self._attempt_reconnect())
 
     def _handle_message(self, data: bytes) -> None:
         try:
@@ -141,3 +148,21 @@ class WsTransport:
         if handlers:
             for handler in list(handlers):
                 handler(envelope)
+
+    async def _attempt_reconnect(self) -> None:
+        if self._intentionally_closed:
+            return
+        if self._reconnect_attempts >= self._max_reconnect_attempts:
+            return
+
+        self._reconnect_attempts += 1
+        delay = min(2 ** (self._reconnect_attempts - 1), 30)
+        await asyncio.sleep(delay)
+
+        if self._intentionally_closed or self._connected:
+            return
+
+        try:
+            await self.connect()
+        except Exception:
+            pass  # connect failure triggers recv_loop exit which retries

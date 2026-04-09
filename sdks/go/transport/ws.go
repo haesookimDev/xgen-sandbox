@@ -3,9 +3,12 @@ package transport
 import (
 	"context"
 	"fmt"
+	"log"
+	"math"
 	"net/url"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/xgen-sandbox/sdk-go/protocol"
 	"nhooyr.io/websocket"
@@ -25,6 +28,10 @@ type WSTransport struct {
 	pending   sync.Map // uint32 -> *pendingRequest
 	done      chan struct{}
 	closeOnce sync.Once
+
+	intentionallyClosed bool
+	reconnectAttempts   int
+	maxReconnectAttempts int
 }
 
 type handlerList struct {
@@ -39,9 +46,10 @@ type pendingRequest struct {
 // NewWSTransport creates a new WebSocket transport.
 func NewWSTransport(wsURL, token string) *WSTransport {
 	ws := &WSTransport{
-		url:   wsURL,
-		token: token,
-		done:  make(chan struct{}),
+		url:                  wsURL,
+		token:                token,
+		done:                 make(chan struct{}),
+		maxReconnectAttempts: 5,
 	}
 	ws.nextID.Store(1)
 	return ws
@@ -63,6 +71,8 @@ func (ws *WSTransport) Connect(ctx context.Context) error {
 	}
 	conn.SetReadLimit(16 * 1024 * 1024) // 16MB
 	ws.conn = conn
+	ws.reconnectAttempts = 0
+	ws.intentionallyClosed = false
 
 	go ws.readLoop()
 	return nil
@@ -70,6 +80,7 @@ func (ws *WSTransport) Connect(ctx context.Context) error {
 
 // Close closes the WebSocket connection.
 func (ws *WSTransport) Close() error {
+	ws.intentionallyClosed = true
 	var err error
 	ws.closeOnce.Do(func() {
 		close(ws.done)
@@ -156,8 +167,7 @@ func (ws *WSTransport) readLoop() {
 
 		_, data, err := ws.conn.Read(context.Background())
 		if err != nil {
-			// Connection closed or error; stop the loop.
-			ws.closeOnce.Do(func() { close(ws.done) })
+			go ws.attemptReconnect()
 			return
 		}
 
@@ -167,6 +177,35 @@ func (ws *WSTransport) readLoop() {
 		}
 
 		ws.handleMessage(env)
+	}
+}
+
+func (ws *WSTransport) attemptReconnect() {
+	if ws.intentionallyClosed {
+		ws.closeOnce.Do(func() { close(ws.done) })
+		return
+	}
+	if ws.reconnectAttempts >= ws.maxReconnectAttempts {
+		log.Printf("ws: max reconnect attempts (%d) reached", ws.maxReconnectAttempts)
+		ws.closeOnce.Do(func() { close(ws.done) })
+		return
+	}
+
+	ws.reconnectAttempts++
+	delay := time.Duration(math.Min(float64(int(1)<<ws.reconnectAttempts), 30)) * time.Second
+	time.Sleep(delay)
+
+	if ws.intentionallyClosed {
+		return
+	}
+
+	// Reset closeOnce so Connect can work again
+	ws.closeOnce = sync.Once{}
+	ws.done = make(chan struct{})
+
+	if err := ws.Connect(context.Background()); err != nil {
+		log.Printf("ws: reconnect attempt %d failed: %v", ws.reconnectAttempts, err)
+		go ws.attemptReconnect()
 	}
 }
 

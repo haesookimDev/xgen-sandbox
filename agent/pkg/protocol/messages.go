@@ -8,7 +8,7 @@ const (
 	MsgError        uint8 = 0x03
 	MsgAck          uint8 = 0x04
 
-	// Channel management
+	// Channel management (reserved — not yet implemented in sidecar)
 	MsgChannelOpen  uint8 = 0x10
 	MsgChannelClose uint8 = 0x11
 	MsgChannelData  uint8 = 0x12
@@ -37,7 +37,7 @@ const (
 	// Sandbox lifecycle
 	MsgSandboxReady uint8 = 0x50
 	MsgSandboxError uint8 = 0x51
-	MsgSandboxStats uint8 = 0x52
+	MsgSandboxStats uint8 = 0x52 // reserved — not yet implemented
 )
 
 // Envelope is the wire format for all WebSocket messages.
