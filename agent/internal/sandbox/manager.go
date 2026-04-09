@@ -134,6 +134,29 @@ func (m *Manager) GetExpired() []string {
 	return expired
 }
 
+// Recover re-registers a sandbox that was found in K8s after an agent restart.
+func (m *Manager) Recover(id, template, podIP string, ports []int, gui bool, timeout time.Duration, ready bool) {
+	status := v1.StatusStarting
+	if ready {
+		status = v1.StatusRunning
+	}
+
+	sbx := &Sandbox{
+		ID:        id,
+		Status:    status,
+		Template:  template,
+		Ports:     ports,
+		GUI:       gui,
+		PodIP:     podIP,
+		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(timeout),
+	}
+
+	m.mu.Lock()
+	m.sandboxes[id] = sbx
+	m.mu.Unlock()
+}
+
 func generateID() string {
 	return uuid.New().String()[:12]
 }

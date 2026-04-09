@@ -1,0 +1,46 @@
+# Docker Compose for local development
+#
+# Prerequisites:
+#   - A running Kubernetes cluster (Kind, minikube, etc.)
+#   - kubeconfig accessible at ~/.kube/config
+#
+# Usage:
+#   docker compose up -d
+#   open http://localhost:3000 (dashboard)
+#   Agent API: http://localhost:8080
+
+services:
+  agent:
+    build:
+      context: ./agent
+    ports:
+      - "8080:8080"
+    environment:
+      AGENT_LISTEN_ADDR: ":8080"
+      SANDBOX_NAMESPACE: xgen-sandboxes
+      PREVIEW_DOMAIN: "preview.localhost:8080"
+      AGENT_EXTERNAL_URL: "http://localhost:8080"
+      SIDECAR_IMAGE: "ghcr.io/xgen-sandbox/sidecar:latest"
+      RUNTIME_BASE_IMAGE: "ghcr.io/xgen-sandbox/runtime-base:latest"
+      DEFAULT_TIMEOUT: "1h"
+      MAX_TIMEOUT: "24h"
+      WARM_POOL_SIZE: "0"
+      RATE_LIMIT_PER_MINUTE: "120"
+      API_KEY: "${API_KEY:?Set API_KEY in .env}"
+      JWT_SECRET: "${JWT_SECRET:?Set JWT_SECRET in .env}"
+    volumes:
+      - "${HOME}/.kube/config:/home/appuser/.kube/config:ro"
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ./dashboard
+      args:
+        NEXT_PUBLIC_AGENT_URL: "http://localhost:8080"
+    ports:
+      - "3000:3000"
+    environment:
+      NEXT_PUBLIC_AGENT_URL: "http://localhost:8080"
+    depends_on:
+      - agent
+    restart: unless-stopped

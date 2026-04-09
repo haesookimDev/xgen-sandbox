@@ -105,7 +105,7 @@ func (s *Server) apiHandler() http.Handler {
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(RateLimitMiddleware(120)) // 120 requests/min per client
+		r.Use(RateLimitMiddleware(s.cfg.RateLimitPerMinute))
 		r.Use(s.auth.Middleware)
 		r.Use(auditLog(s.logger, s.auditStore))
 
@@ -173,6 +173,32 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	if req.Template == "" {
 		req.Template = "base"
+	}
+
+	// Validate ports
+	seen := make(map[int]bool)
+	for _, port := range req.Ports {
+		if port < 1 || port > 65535 {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid port: %d (must be 1-65535)", port))
+			return
+		}
+		if seen[port] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("duplicate port: %d", port))
+			return
+		}
+		seen[port] = true
+	}
+
+	// Validate metadata size
+	if len(req.Metadata) > 20 {
+		writeError(w, http.StatusBadRequest, "too many metadata entries (max 20)")
+		return
+	}
+	for k, v := range req.Metadata {
+		if len(k) > 128 || len(v) > 1024 {
+			writeError(w, http.StatusBadRequest, "metadata key max 128 chars, value max 1024 chars")
+			return
+		}
 	}
 
 	timeout := s.cfg.DefaultTimeout

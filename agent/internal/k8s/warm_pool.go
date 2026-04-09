@@ -14,27 +14,57 @@ type WarmPool struct {
 	podMgr   *PodManager
 	mu       sync.Mutex
 	pool     map[string][]string // template -> list of warm sandboxIDs
-	size     int                 // target pool size per template
+	size     int                 // default target pool size per template
+	sizes    map[string]int      // per-template overrides
 	defaults []string            // templates to pre-warm
 }
 
-// NewWarmPool creates a warm pool. Size is the target number of warm pods per template.
-func NewWarmPool(podMgr *PodManager, size int) *WarmPool {
-	return &WarmPool{
+// NewWarmPool creates a warm pool. Size is the default number of warm pods per template.
+// perTemplate overrides the default for specific templates.
+func NewWarmPool(podMgr *PodManager, size int, perTemplate ...map[string]int) *WarmPool {
+	wp := &WarmPool{
 		podMgr:   podMgr,
 		pool:     make(map[string][]string),
 		size:     size,
+		sizes:    make(map[string]int),
 		defaults: []string{"base"},
 	}
+	if len(perTemplate) > 0 && perTemplate[0] != nil {
+		wp.sizes = perTemplate[0]
+		// Add any templates with explicit sizes to defaults
+		for tmpl := range wp.sizes {
+			found := false
+			for _, d := range wp.defaults {
+				if d == tmpl {
+					found = true
+					break
+				}
+			}
+			if !found {
+				wp.defaults = append(wp.defaults, tmpl)
+			}
+		}
+	}
+	return wp
+}
+
+// targetSize returns the target pool size for a given template.
+func (wp *WarmPool) targetSize(template string) int {
+	if s, ok := wp.sizes[template]; ok {
+		return s
+	}
+	return wp.size
 }
 
 // Start pre-creates pods to fill the warm pool.
 func (wp *WarmPool) Start(ctx context.Context) {
-	if wp.size <= 0 {
+	if wp.size <= 0 && len(wp.sizes) == 0 {
 		return
 	}
 	for _, tmpl := range wp.defaults {
-		wp.fill(ctx, tmpl)
+		if wp.targetSize(tmpl) > 0 {
+			wp.fill(ctx, tmpl)
+		}
 	}
 }
 
@@ -89,7 +119,7 @@ func (wp *WarmPool) IsWarm(sandboxID string) bool {
 func (wp *WarmPool) fill(ctx context.Context, template string) {
 	wp.mu.Lock()
 	current := len(wp.pool[template])
-	needed := wp.size - current
+	needed := wp.targetSize(template) - current
 	wp.mu.Unlock()
 
 	for i := 0; i < needed; i++ {
@@ -125,7 +155,7 @@ func (wp *WarmPool) Status() map[string]WarmPoolDetail {
 	for _, tmpl := range wp.defaults {
 		result[tmpl] = WarmPoolDetail{
 			Available: len(wp.pool[tmpl]),
-			Target:    wp.size,
+			Target:    wp.targetSize(tmpl),
 		}
 	}
 	// Include any additional templates that have pods
@@ -133,7 +163,7 @@ func (wp *WarmPool) Status() map[string]WarmPoolDetail {
 		if _, ok := result[tmpl]; !ok {
 			result[tmpl] = WarmPoolDetail{
 				Available: len(ids),
-				Target:    wp.size,
+				Target:    wp.targetSize(tmpl),
 			}
 		}
 	}

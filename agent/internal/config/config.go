@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -18,7 +19,9 @@ type Config struct {
 	DefaultTimeout      time.Duration
 	MaxTimeout          time.Duration
 	WarmPoolSize        int
+	WarmPoolSizes       map[string]int // template -> pool size (overrides WarmPoolSize)
 	ImagePullPolicy     string
+	RateLimitPerMinute  int
 	APIKey              string // single API key for Phase 1; replaced by DB lookup later
 	JWTSecret           string
 }
@@ -35,7 +38,9 @@ func Load() *Config {
 		ImagePullPolicy:  envOrDefault("IMAGE_PULL_POLICY", ""),
 		DefaultTimeout:   envDurationOrDefault("DEFAULT_TIMEOUT", 1*time.Hour),
 		MaxTimeout:       envDurationOrDefault("MAX_TIMEOUT", 24*time.Hour),
-		WarmPoolSize:     envIntOrDefault("WARM_POOL_SIZE", 0),
+		WarmPoolSize:       envIntOrDefault("WARM_POOL_SIZE", 0),
+		WarmPoolSizes:      parseWarmPoolSizes(os.Getenv("WARM_POOL_SIZES")),
+		RateLimitPerMinute: envIntOrDefault("RATE_LIMIT_PER_MINUTE", 120),
 		APIKey:           envOrDefault("API_KEY", ""),
 		JWTSecret:        envOrDefault("JWT_SECRET", ""),
 	}
@@ -64,6 +69,26 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// parseWarmPoolSizes parses "base:3,nodejs:2,gui:1" into a map.
+func parseWarmPoolSizes(raw string) map[string]int {
+	result := make(map[string]int)
+	if raw == "" {
+		return result
+	}
+	for _, pair := range strings.Split(raw, ",") {
+		parts := strings.SplitN(strings.TrimSpace(pair), ":", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+		if err != nil || n < 0 {
+			continue
+		}
+		result[strings.TrimSpace(parts[0])] = n
+	}
+	return result
 }
 
 func envOrDefault(key, fallback string) string {

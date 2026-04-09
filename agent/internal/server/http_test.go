@@ -31,6 +31,7 @@ func newTestServer() (*Server, *auth.Authenticator) {
 		RuntimeBaseImage: "runtime:test",
 		DefaultTimeout:   time.Hour,
 		MaxTimeout:       24 * time.Hour,
+		RateLimitPerMinute: 1000,
 		APIKey:           "test-key",
 		JWTSecret:        "test-secret",
 	}

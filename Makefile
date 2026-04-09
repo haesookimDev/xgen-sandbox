@@ -1,18 +1,23 @@
-.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint
+.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint help
+
+# --- Help ---
+
+help: ## Show available targets
+	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-20s\033[0m %s\n", $$1, $$2}'
 
 # --- Build ---
 
-all: build
+all: build ## Build agent and sidecar binaries
 
-build: build-agent build-sidecar
+build: build-agent build-sidecar ## Build agent and sidecar binaries
 
-build-agent:
+build-agent: ## Build agent binary
 	cd agent && go build -o ../bin/agent ./cmd/agent
 
-build-sidecar:
+build-sidecar: ## Build sidecar binary
 	cd sidecar && go build -o ../bin/sidecar ./cmd/sidecar
 
-build-images:
+build-images: ## Build all Docker images
 	docker build -t ghcr.io/xgen-sandbox/agent:latest ./agent
 	docker build -t ghcr.io/xgen-sandbox/sidecar:latest ./sidecar
 	docker build -t ghcr.io/xgen-sandbox/runtime-base:latest ./runtime/base
@@ -21,15 +26,15 @@ build-images:
 	docker build -t ghcr.io/xgen-sandbox/runtime-gui:latest ./runtime/gui
 	docker build -t ghcr.io/xgen-sandbox/dashboard:latest ./dashboard
 
-build-dashboard:
+build-dashboard: ## Build Next.js dashboard
 	cd dashboard && npm install && npm run build
 
-build-sdk:
+build-sdk: ## Build TypeScript SDK
 	cd sdks/typescript && npm install && npm run build
 
 # --- Local Development ---
 
-dev-cluster:
+dev-cluster: ## Create Kind cluster and load images
 	kind create cluster --config deploy/dev/kind-config.yaml
 	kind load docker-image ghcr.io/xgen-sandbox/agent:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/sidecar:latest --name xgen-sandbox
@@ -38,7 +43,7 @@ dev-cluster:
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-python:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-gui:latest --name xgen-sandbox
 
-dev-deploy:
+dev-deploy: ## Deploy to Kind cluster via Helm
 	helm upgrade --install xgen-sandbox deploy/helm/xgen-sandbox \
 		--namespace xgen-system --create-namespace \
 		--set agent.image.pullPolicy=Never \
@@ -46,13 +51,13 @@ dev-deploy:
 		--set sandbox.imagePullPolicy=Never \
 		--set agent.service.type=NodePort
 
-dev-dashboard:
+dev-dashboard: ## Run dashboard dev server
 	cd dashboard && npm run dev
 
-dev-teardown:
+dev-teardown: ## Delete Kind cluster
 	kind delete cluster --name xgen-sandbox
 
-dev-reload: build-images
+dev-reload: build-images ## Rebuild images and restart agent in Kind
 	kind load docker-image ghcr.io/xgen-sandbox/agent:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/sidecar:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-base:latest --name xgen-sandbox
@@ -63,21 +68,21 @@ dev-reload: build-images
 
 # --- Test ---
 
-test:
+test: ## Run Go tests for agent and sidecar
 	cd agent && go test ./...
 	cd sidecar && go test ./...
 
-test-sdk:
+test-sdk: ## Run TypeScript SDK tests
 	cd sdks/typescript && npm test
 
 # --- Lint ---
 
-lint:
+lint: ## Run Go vet on agent and sidecar
 	cd agent && go vet ./...
 	cd sidecar && go vet ./...
 
 # --- Go module management ---
 
-tidy:
+tidy: ## Run go mod tidy for agent and sidecar
 	cd agent && go mod tidy
 	cd sidecar && go mod tidy

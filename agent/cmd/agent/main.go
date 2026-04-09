@@ -89,11 +89,29 @@ func main() {
 		log.Fatalf("init pod manager: %v", initErr)
 	}
 
-	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize)
+	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize, cfg.WarmPoolSizes)
 	auditStore := audit.NewStore(1000)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+
+	// Recover sandboxes from existing K8s pods (survives agent restart)
+	recovered, recoverErr := podMgr.RecoverExistingPods(ctx)
+	if recoverErr != nil {
+		log.Printf("warning: sandbox recovery failed: %v", recoverErr)
+	} else if len(recovered) > 0 {
+		for _, rs := range recovered {
+			sandboxMgr.Recover(rs.SandboxID, rs.Template, rs.PodIP, nil, false, cfg.DefaultTimeout, rs.Ready)
+			if rs.Ready && rs.PodIP != "" {
+				rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
+				if err := wsProxy.ConnectToSidecar(rctx, rs.SandboxID, rs.PodIP); err != nil {
+					log.Printf("recover: connect to sidecar %s: %v", rs.SandboxID, err)
+				}
+				rcancel()
+			}
+		}
+		log.Printf("recovered %d sandbox(es) from existing pods", len(recovered))
+	}
 
 	podMgr.StartWatcher(ctx)
 

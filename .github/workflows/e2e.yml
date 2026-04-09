@@ -1,0 +1,73 @@
+name: E2E Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  e2e:
+    if: github.repository == 'haesookimDev/xgen-sandbox'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+
+      - name: Create Kind cluster
+        uses: helm/kind-action@v1
+        with:
+          config: deploy/dev/kind-config.yaml
+          cluster_name: xgen-e2e
+
+      - name: Build images
+        run: |
+          docker build -t ghcr.io/xgen-sandbox/agent:e2e ./agent
+          docker build -t ghcr.io/xgen-sandbox/sidecar:e2e ./sidecar
+          docker build -t ghcr.io/xgen-sandbox/runtime-base:e2e ./runtime/base
+
+      - name: Load images into Kind
+        run: |
+          kind load docker-image ghcr.io/xgen-sandbox/agent:e2e --name xgen-e2e
+          kind load docker-image ghcr.io/xgen-sandbox/sidecar:e2e --name xgen-e2e
+          kind load docker-image ghcr.io/xgen-sandbox/runtime-base:e2e --name xgen-e2e
+
+      - name: Deploy with Helm
+        run: |
+          kubectl create namespace xgen-system || true
+          kubectl create namespace xgen-sandboxes || true
+          helm upgrade --install xgen-sandbox deploy/helm/xgen-sandbox \
+            --namespace xgen-system \
+            --set agent.image.tag=e2e \
+            --set agent.image.pullPolicy=Never \
+            --set sidecar.image.tag=e2e \
+            --set runtime.baseImage=ghcr.io/xgen-sandbox/runtime-base:e2e \
+            --set sandbox.imagePullPolicy=Never \
+            --set agent.secrets.apiKey=e2e-test-key \
+            --set agent.secrets.jwtSecret=e2e-test-jwt-secret-32-chars-min \
+            --wait --timeout=120s
+
+      - name: Wait for agent to be ready
+        run: |
+          kubectl wait --for=condition=ready pod -l app=xgen-agent -n xgen-system --timeout=60s
+
+      - name: Port-forward agent
+        run: |
+          kubectl port-forward -n xgen-system svc/xgen-agent 8080:8080 &
+          sleep 3
+
+      - name: Run E2E tests
+        env:
+          E2E_AGENT_URL: http://localhost:8080
+          E2E_API_KEY: e2e-test-key
+        run: cd agent && go test -v -tags=e2e -run TestE2E ./test/e2e/...
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          kubectl logs -n xgen-system -l app=xgen-agent --tail=100
+          kubectl get pods -n xgen-sandboxes -o wide

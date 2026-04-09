@@ -4,10 +4,12 @@ metadata:
   name: xgen-agent
   namespace: xgen-system
 ---
+# Namespace-scoped Role — agent only needs access to sandbox pods in the sandbox namespace
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: xgen-agent
+  namespace: {{ .Values.sandbox.namespace }}
 rules:
   - apiGroups: [""]
     resources: ["pods"]
@@ -20,12 +22,13 @@ rules:
     verbs: ["get", "list", "create", "delete"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: xgen-agent
+  namespace: {{ .Values.sandbox.namespace }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: xgen-agent
 subjects:
   - kind: ServiceAccount

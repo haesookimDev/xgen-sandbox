@@ -21,9 +21,23 @@ function CreateDialog({
   const [timeout, setTimeout] = useState(3600);
   const [ports, setPorts] = useState("");
   const [gui, setGui] = useState(false);
+  const [envVars, setEnvVars] = useState("");
+  const [metadata, setMetadata] = useState("");
   const createMutation = useCreateSandbox();
 
   if (!open) return null;
+
+  const parseKV = (raw: string): Record<string, string> | undefined => {
+    if (!raw.trim()) return undefined;
+    const result: Record<string, string> = {};
+    for (const line of raw.split("\n")) {
+      const idx = line.indexOf("=");
+      if (idx > 0) {
+        result[line.slice(0, idx).trim()] = line.slice(idx + 1).trim();
+      }
+    }
+    return Object.keys(result).length > 0 ? result : undefined;
+  };
 
   const handleCreate = async () => {
     await createMutation.mutateAsync({
@@ -33,6 +47,8 @@ function CreateDialog({
         ? ports.split(",").map((p) => parseInt(p.trim(), 10))
         : undefined,
       gui,
+      env: parseKV(envVars),
+      metadata: parseKV(metadata),
     });
     onClose();
   };
@@ -93,6 +109,34 @@ function CreateDialog({
             <label htmlFor="gui" className="text-sm">
               Enable GUI (VNC)
             </label>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Environment Variables
+            </label>
+            <textarea
+              value={envVars}
+              onChange={(e) => setEnvVars(e.target.value)}
+              placeholder={"NODE_ENV=production\nDEBUG=true"}
+              rows={3}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
+            />
+            <p className="mt-0.5 text-xs text-muted-foreground">One per line: KEY=VALUE</p>
+          </div>
+
+          <div>
+            <label className="mb-1 block text-sm font-medium">
+              Metadata
+            </label>
+            <textarea
+              value={metadata}
+              onChange={(e) => setMetadata(e.target.value)}
+              placeholder={"owner=team-a\nproject=demo"}
+              rows={2}
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm font-mono"
+            />
+            <p className="mt-0.5 text-xs text-muted-foreground">One per line: KEY=VALUE</p>
           </div>
         </div>
 

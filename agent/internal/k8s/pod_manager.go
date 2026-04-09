@@ -381,6 +381,55 @@ func (pm *PodManager) RemapPod(oldID, newID string) {
 	}
 }
 
+// RecoveredSandbox holds state recovered from an existing K8s pod.
+type RecoveredSandbox struct {
+	SandboxID string
+	Template  string
+	PodIP     string
+	Ready     bool
+}
+
+// RecoverExistingPods scans K8s for sandbox pods that survived an agent restart
+// and returns their state so the sandbox manager can re-register them.
+func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandbox, error) {
+	pods, err := pm.client.CoreV1().Pods(pm.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "app.kubernetes.io/name=xgen-sandbox",
+	})
+	if err != nil {
+		return nil, fmt.Errorf("list pods for recovery: %w", err)
+	}
+
+	var recovered []RecoveredSandbox
+	pm.mu.Lock()
+	defer pm.mu.Unlock()
+
+	for _, pod := range pods.Items {
+		sandboxID := pod.Labels["xgen.io/sandbox-id"]
+		template := pod.Labels["xgen.io/template"]
+		if sandboxID == "" || strings.HasPrefix(sandboxID, "warm-") {
+			continue
+		}
+
+		ready := isPodReady(&pod)
+		pm.pods[sandboxID] = &PodInfo{
+			SandboxID: sandboxID,
+			PodName:   pod.Name,
+			PodIP:     pod.Status.PodIP,
+			Phase:     pod.Status.Phase,
+			Ready:     ready,
+		}
+
+		recovered = append(recovered, RecoveredSandbox{
+			SandboxID: sandboxID,
+			Template:  template,
+			PodIP:     pod.Status.PodIP,
+			Ready:     ready,
+		})
+	}
+
+	return recovered, nil
+}
+
 // ListPods returns all cached sandbox pod infos.
 func (pm *PodManager) ListPods() []*PodInfo {
 	pm.mu.RLock()
