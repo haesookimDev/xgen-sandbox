@@ -21,7 +21,7 @@ export function SandboxDesktop({
     let destroyed = false;
 
     async function init() {
-      const { default: RFB } = await import("@novnc/novnc/core/rfb.js");
+      const { default: RFB } = await import("@novnc/novnc/lib/rfb.js");
 
       if (destroyed || !containerRef.current) return;
 
