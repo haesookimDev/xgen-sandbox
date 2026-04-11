@@ -1,3 +1,6 @@
+-include .env
+export
+
 .PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint help
 
 # --- Help ---
@@ -49,7 +52,9 @@ dev-deploy: ## Deploy to Kind cluster via Helm
 		--set agent.image.pullPolicy=Never \
 		--set sidecar.image.pullPolicy=Never \
 		--set sandbox.imagePullPolicy=Never \
-		--set agent.service.type=NodePort
+		--set agent.service.type=NodePort \
+		--set agent.secrets.apiKey=$(API_KEY) \
+		--set agent.secrets.jwtSecret=$(JWT_SECRET)
 
 dev-dashboard: ## Run dashboard dev server
 	cd dashboard && npm run dev
