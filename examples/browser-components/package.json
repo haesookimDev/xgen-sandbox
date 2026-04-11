@@ -5,6 +5,7 @@
     "build": "vite build"
   },
   "dependencies": {
+    "@novnc/novnc": "~1.5.0",
     "@xgen-sandbox/browser": "file:../../browser",
     "@xgen-sandbox/sdk": "file:../../sdks/typescript",
     "react": "^18.2.0",
