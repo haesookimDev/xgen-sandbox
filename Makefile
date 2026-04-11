@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint help
+.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint security-scan help
 
 # --- Help ---
 
@@ -91,6 +91,13 @@ lint: ## Run Go vet on agent and sidecar
 tidy: ## Run go mod tidy for agent and sidecar
 	cd agent && go mod tidy
 	cd sidecar && go mod tidy
+
+# --- Security ---
+
+security-scan: build-images ## Run Trivy security scan on Docker images (requires: brew install trivy)
+	trivy image --severity CRITICAL,HIGH --exit-code 1 ghcr.io/xgen-sandbox/agent:latest
+	trivy image --severity CRITICAL,HIGH --exit-code 1 ghcr.io/xgen-sandbox/sidecar:latest
+	trivy image --severity CRITICAL,HIGH --exit-code 1 ghcr.io/xgen-sandbox/dashboard:latest
 
 # --- Hot Reload Development ---
 
