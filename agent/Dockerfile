@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /build
 COPY go.mod go.sum ./
@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /agent ./cmd/agent
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates
+RUN apk upgrade --no-cache && apk add --no-cache ca-certificates
 COPY --from=builder /agent /usr/local/bin/agent
 
 USER 1000:1000

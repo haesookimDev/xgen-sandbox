@@ -66,16 +66,19 @@ export class WsTransport {
         resolve();
       });
 
-      this.ws.addEventListener("message", (event: any) => {
+      this.ws.addEventListener("message", async (event: any) => {
         const raw = event.data ?? event;
-        const bytes =
-          raw instanceof ArrayBuffer
-            ? new Uint8Array(raw)
-            : new Uint8Array(
-                (raw as Buffer).buffer,
-                (raw as Buffer).byteOffset,
-                (raw as Buffer).byteLength
-              );
+        let bytes: Uint8Array;
+        if (raw instanceof ArrayBuffer) {
+          bytes = new Uint8Array(raw);
+        } else if (typeof Blob !== "undefined" && raw instanceof Blob) {
+          bytes = new Uint8Array(await raw.arrayBuffer());
+        } else if (raw instanceof Uint8Array) {
+          bytes = raw;
+        } else {
+          // Node.js Buffer
+          bytes = new Uint8Array(raw.buffer, raw.byteOffset, raw.byteLength);
+        }
         this.handleMessage(bytes);
       });
 
