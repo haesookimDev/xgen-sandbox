@@ -57,13 +57,13 @@ class WsTransport:
 
     def send(self, envelope: Envelope) -> None:
         if not self._ws or not self._connected:
-            raise ConnectionError("Not connected")
+            raise ConnectionError("WebSocket not connected. Ensure the sandbox is running and connect() was called.")
         data = encode_envelope(envelope)
         asyncio.get_event_loop().create_task(self._ws.send(data))
 
     async def send_async(self, envelope: Envelope) -> None:
         if not self._ws or not self._connected:
-            raise ConnectionError("Not connected")
+            raise ConnectionError("WebSocket not connected. Ensure the sandbox is running and connect() was called.")
         data = encode_envelope(envelope)
         await self._ws.send(data)
 
@@ -89,7 +89,7 @@ class WsTransport:
             return await asyncio.wait_for(fut, timeout=timeout)
         except asyncio.TimeoutError:
             self._pending.pop(msg_id, None)
-            raise TimeoutError(f"Request timeout (id={msg_id})")
+            raise TimeoutError(f"WebSocket request timeout after {timeout}s (id={msg_id}). The sandbox sidecar may be unresponsive.")
 
     def on(self, msg_type: int, handler: MessageHandler) -> Callable[[], None]:
         handlers = self._handlers.setdefault(msg_type, [])

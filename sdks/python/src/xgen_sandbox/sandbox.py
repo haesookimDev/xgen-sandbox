@@ -21,6 +21,19 @@ from .types import (
 
 
 class Sandbox:
+    """A running sandbox instance.
+
+    Provides methods for command execution, file operations,
+    terminal access, and lifecycle management.
+
+    Example::
+
+        sandbox = await client.create_sandbox(template="nodejs")
+        result = await sandbox.exec("node -v")
+        print(result.stdout)
+        await sandbox.destroy()
+    """
+
     def __init__(self, info: SandboxInfo, http: HttpTransport) -> None:
         self.id = info.id
         self.info = info
@@ -30,13 +43,23 @@ class Sandbox:
 
     @property
     def status(self) -> SandboxStatus:
+        """Current lifecycle status of the sandbox."""
         return self._status
 
     @property
     def preview_urls(self) -> dict[int, str]:
+        """Map of exposed port numbers to their public preview URLs."""
         return self.info.preview_urls
 
     def get_preview_url(self, port: int) -> str | None:
+        """Get the preview URL for a specific port.
+
+        Args:
+            port: The port number to look up.
+
+        Returns:
+            The preview URL string, or ``None`` if the port is not exposed.
+        """
         return self.info.preview_urls.get(port)
 
     # -- WebSocket --
@@ -62,6 +85,23 @@ class Sandbox:
         cwd: str | None = None,
         timeout: int | None = None,
     ) -> ExecResult:
+        """Execute a command synchronously and return the result.
+
+        The command is run via ``sh -c``, so shell features (pipes, redirects) are supported.
+
+        Args:
+            command: Shell command to execute.
+            args: Additional arguments appended after the command.
+            env: Environment variables for the command.
+            cwd: Working directory. Defaults to ``/home/sandbox/workspace``.
+            timeout: Timeout in seconds. Defaults to 30.
+
+        Returns:
+            An :class:`~xgen_sandbox.ExecResult` with exit_code, stdout, and stderr.
+
+        Raises:
+            RuntimeError: If the execution fails (e.g. sandbox not ready).
+        """
         return await self._http.exec_command(
             self.id,
             command=command,
@@ -161,16 +201,41 @@ class Sandbox:
     # -- Filesystem (WebSocket) --
 
     async def read_file(self, path: str) -> bytes:
+        """Read a file from the sandbox as raw bytes.
+
+        Args:
+            path: File path relative to the workspace root.
+
+        Returns:
+            The file contents as bytes.
+
+        Raises:
+            RuntimeError: If the file does not exist or cannot be read.
+        """
         ws = await self._ensure_ws()
         payload = encode_payload({"path": path})
         resp = await ws.request(MsgType.FsRead, 0, payload)
         return resp.payload
 
     async def read_text_file(self, path: str) -> str:
+        """Read a file from the sandbox as a UTF-8 string.
+
+        Args:
+            path: File path relative to the workspace root.
+
+        Returns:
+            The file contents as a string.
+        """
         data = await self.read_file(path)
         return data.decode("utf-8")
 
     async def write_file(self, path: str, content: bytes | str) -> None:
+        """Write content to a file in the sandbox. Creates the file if it doesn't exist.
+
+        Args:
+            path: File path relative to the workspace root.
+            content: File content as a string or bytes.
+        """
         ws = await self._ensure_ws()
         if isinstance(content, str):
             content = content.encode("utf-8")
@@ -178,6 +243,14 @@ class Sandbox:
         await ws.request(MsgType.FsWrite, 0, payload)
 
     async def list_dir(self, path: str) -> list[FileInfo]:
+        """List the contents of a directory in the sandbox.
+
+        Args:
+            path: Directory path relative to the workspace root. Use ``"."`` for the root.
+
+        Returns:
+            A list of :class:`~xgen_sandbox.FileInfo` entries.
+        """
         ws = await self._ensure_ws()
         payload = encode_payload({"path": path})
         resp = await ws.request(MsgType.FsList, 0, payload)
@@ -193,6 +266,12 @@ class Sandbox:
         ]
 
     async def remove_file(self, path: str, recursive: bool = False) -> None:
+        """Remove a file or directory from the sandbox.
+
+        Args:
+            path: Path relative to the workspace root.
+            recursive: If ``True``, remove directories and their contents recursively.
+        """
         ws = await self._ensure_ws()
         payload = encode_payload({"path": path, "recursive": recursive})
         await ws.request(MsgType.FsRemove, 0, payload)
@@ -202,6 +281,15 @@ class Sandbox:
     def watch_files(
         self, path: str, callback: Callable[[FileEvent], None]
     ) -> Disposable:
+        """Watch a path for file changes.
+
+        Args:
+            path: Directory path to watch.
+            callback: Called with a :class:`~xgen_sandbox.FileEvent` on each change.
+
+        Returns:
+            A :class:`~xgen_sandbox.Disposable` to stop watching.
+        """
         import asyncio
 
         disposed = False
@@ -238,6 +326,16 @@ class Sandbox:
     # -- Port events (WebSocket event subscription) --
 
     def on_port_open(self, callback: Callable[[int], None]) -> Disposable:
+        """Listen for port open events in the sandbox.
+
+        Fires when a process starts listening on a new port.
+
+        Args:
+            callback: Called with the port number when a new port is detected.
+
+        Returns:
+            A :class:`~xgen_sandbox.Disposable` to stop listening.
+        """
         import asyncio
 
         disposed = False
@@ -269,9 +367,11 @@ class Sandbox:
     # -- Lifecycle --
 
     async def keep_alive(self) -> None:
+        """Extend the sandbox timeout. Call periodically to prevent automatic expiration."""
         await self._http.keep_alive(self.id)
 
     async def destroy(self) -> None:
+        """Destroy the sandbox and release all resources."""
         if self._ws:
             self._ws.close()
             self._ws = None

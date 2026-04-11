@@ -501,3 +501,132 @@ const sandbox = await client.createSandbox({ timeout_seconds: 300 });
 // Extend by the default duration (1 hour) at any time
 await sandbox.keepAlive();
 ```
+
+---
+
+## Command Execution
+
+All SDKs wrap commands with `sh -c`, so shell features (pipes, redirects, environment variable expansion) work out of the box.
+
+### exec vs execStream
+
+| | `exec` | `execStream` |
+|---|---|---|
+| **Use case** | Short commands that complete quickly | Long-running processes, servers |
+| **Returns** | `ExecResult` with stdout/stderr after completion | Async iterator of `ExecEvent` |
+| **Blocking** | Yes — waits until the process exits | No — yields events as they arrive |
+| **Background processes** | Use `nohup cmd &` pattern | `break` from iterator to detach |
+
+```typescript
+// exec: good for quick commands
+const result = await sandbox.exec("ls -la");
+
+// execStream: good for long-running processes
+for await (const event of sandbox.execStream("npm start")) {
+  if (event.type === "stdout" && event.data?.includes("ready")) {
+    break; // Server is up, stop consuming events
+  }
+}
+```
+
+```python
+# exec: good for quick commands
+result = await sandbox.exec("ls -la")
+
+# exec_stream: good for long-running processes
+async for event in sandbox.exec_stream("npm start"):
+    if event.type == "stdout" and "ready" in (event.data or ""):
+        break
+```
+
+---
+
+## Error Handling
+
+### TypeScript
+
+```typescript
+try {
+  const sandbox = await client.createSandbox({ template: "nodejs" });
+  const result = await sandbox.exec("node -v");
+} catch (err) {
+  if (err.message.includes("Auth failed")) {
+    // Invalid API key or agent unreachable
+  } else if (err.message.includes("not found")) {
+    // Sandbox does not exist
+  } else if (err.message.includes("timeout")) {
+    // Sandbox did not start in time, or command timed out
+  } else if (err.message.includes("WebSocket not connected")) {
+    // WebSocket disconnected — sandbox may have been destroyed
+  }
+}
+```
+
+**Common errors:**
+
+| Error message | Cause | Solution |
+|---|---|---|
+| `Auth failed (POST .../auth/token): 401` | Invalid API key | Check `apiKey` value |
+| `Create sandbox failed (500): ...` | Server-side error | Check agent logs |
+| `Get sandbox failed: sandbox 'xxx' not found (404)` | Sandbox expired or destroyed | Create a new sandbox |
+| `Exec timeout` | Command did not complete in time | Increase `timeout` option |
+| `WebSocket request timeout after 30000ms` | Sidecar unresponsive | Sandbox may be overloaded or crashed |
+| `WebSocket not connected` | Connection lost | Sandbox was destroyed or network issue |
+
+### Python
+
+```python
+try:
+    sandbox = await client.create_sandbox(template="python")
+    result = await sandbox.exec("python3 -V")
+except RuntimeError as e:
+    # HTTP API errors (create, get, exec, delete)
+    print(f"API error: {e}")
+except TimeoutError as e:
+    # Sandbox startup timeout or WebSocket request timeout
+    print(f"Timeout: {e}")
+except ConnectionError as e:
+    # WebSocket disconnected
+    print(f"Connection lost: {e}")
+```
+
+### Go
+
+```go
+sandbox, err := client.CreateSandbox(ctx, opts)
+if err != nil {
+    // Errors are wrapped with context, use errors.Is/errors.As or string matching
+    log.Fatalf("create failed: %v", err)
+}
+
+result, err := sandbox.Exec(ctx, "go version")
+if err != nil {
+    // err contains sandbox ID and operation context
+    log.Printf("exec failed: %v", err)
+}
+```
+
+### Rust
+
+```rust
+match client.create_sandbox(opts).await {
+    Ok(sandbox) => { /* use sandbox */ }
+    Err(e) => eprintln!("Failed: {}", e),
+}
+```
+
+---
+
+## SDK Feature Matrix
+
+| Feature | TypeScript | Python | Go | Rust |
+|---|:---:|:---:|:---:|:---:|
+| `exec` (sync) | REST | REST | WebSocket | REST |
+| `execStream` | WebSocket | WebSocket | WebSocket | — |
+| `openTerminal` | WebSocket | WebSocket | WebSocket | — |
+| File operations | WebSocket | WebSocket | WebSocket | WebSocket |
+| `watchFiles` | WebSocket | WebSocket | WebSocket | WebSocket |
+| `onPortOpen` | WebSocket | WebSocket | WebSocket | WebSocket |
+| `keepAlive` | REST | REST | REST | REST |
+| Auto-reconnect | Yes | Yes | Yes | No |
+| Browser support | Yes | — | — | — |

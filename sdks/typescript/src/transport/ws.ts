@@ -112,7 +112,7 @@ export class WsTransport {
 
   send(envelope: Envelope): void {
     if (!this.ws || !this.connected) {
-      throw new Error("Not connected");
+      throw new Error("WebSocket not connected. Ensure the sandbox is running and call connect() first.");
     }
     const data = encodeEnvelope(envelope);
     this.ws.send(data);
@@ -129,7 +129,7 @@ export class WsTransport {
     return new Promise<Envelope>((resolve, reject) => {
       const timer = setTimeout(() => {
         this.pendingRequests.delete(id);
-        reject(new Error(`Request timeout (id=${id})`));
+        reject(new Error(`WebSocket request timeout after ${timeout}ms (id=${id}). The sandbox sidecar may be unresponsive.`));
       }, timeout);
 
       this.pendingRequests.set(id, {

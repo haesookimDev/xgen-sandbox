@@ -90,7 +90,7 @@ class HttpTransport:
                 err = resp.json().get("error", resp.text)
             except Exception:
                 err = resp.text
-            raise RuntimeError(f"Create sandbox failed: {err}")
+            raise RuntimeError(f"Create sandbox failed ({resp.status_code}): {err}")
         return _parse_sandbox_info(resp.json())
 
     async def get_sandbox(self, sandbox_id: str) -> SandboxInfo:
@@ -99,7 +99,7 @@ class HttpTransport:
             headers=await self._headers(),
         )
         if not resp.is_success:
-            raise RuntimeError(f"Get sandbox failed: {resp.status_code}")
+            raise RuntimeError(f"Get sandbox failed: sandbox '{sandbox_id}' not found ({resp.status_code})")
         return _parse_sandbox_info(resp.json())
 
     async def list_sandboxes(self) -> list[SandboxInfo]:
@@ -117,7 +117,7 @@ class HttpTransport:
             headers=await self._headers(),
         )
         if not resp.is_success and resp.status_code != 204:
-            raise RuntimeError(f"Delete sandbox failed: {resp.status_code}")
+            raise RuntimeError(f"Delete sandbox '{sandbox_id}' failed ({resp.status_code})")
 
     async def keep_alive(self, sandbox_id: str) -> None:
         resp = await self._client.post(
@@ -125,7 +125,7 @@ class HttpTransport:
             headers=await self._headers(),
         )
         if not resp.is_success and resp.status_code != 204:
-            raise RuntimeError(f"Keepalive failed: {resp.status_code}")
+            raise RuntimeError(f"Keepalive for sandbox '{sandbox_id}' failed ({resp.status_code})")
 
     async def exec_command(
         self,
@@ -151,7 +151,7 @@ class HttpTransport:
             timeout=max(30, (timeout_seconds or 30) + 5),
         )
         if not resp.is_success:
-            raise RuntimeError(f"Exec failed: {resp.status_code} {resp.text}")
+            raise RuntimeError(f"Exec failed on sandbox '{sandbox_id}' ({resp.status_code}): {resp.text}")
         data = resp.json()
         return ExecResult(
             exit_code=data["exit_code"],

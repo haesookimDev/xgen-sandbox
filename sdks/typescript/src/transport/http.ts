@@ -24,7 +24,7 @@ export class HttpTransport {
     });
 
     if (!resp.ok) {
-      throw new Error(`Auth failed: ${resp.status} ${await resp.text()}`);
+      throw new Error(`Auth failed (POST ${this.baseUrl}/api/v1/auth/token): ${resp.status} ${await resp.text()}`);
     }
 
     const data = await resp.json();
@@ -58,7 +58,7 @@ export class HttpTransport {
 
     if (!resp.ok) {
       const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(`Create sandbox failed: ${err.error}`);
+      throw new Error(`Create sandbox failed (${resp.status}): ${err.error}`);
     }
 
     const data = await resp.json();
@@ -80,7 +80,7 @@ export class HttpTransport {
       headers: await this.headers(),
     });
     if (!resp.ok) {
-      throw new Error(`Get sandbox failed: ${resp.status}`);
+      throw new Error(`Get sandbox failed: sandbox '${id}' not found (${resp.status})`);
     }
     const data = await resp.json();
     return {
@@ -121,7 +121,7 @@ export class HttpTransport {
       headers: await this.headers(),
     });
     if (!resp.ok && resp.status !== 204) {
-      throw new Error(`Delete sandbox failed: ${resp.status}`);
+      throw new Error(`Delete sandbox '${id}' failed (${resp.status})`);
     }
   }
 
@@ -134,7 +134,7 @@ export class HttpTransport {
       }
     );
     if (!resp.ok && resp.status !== 204) {
-      throw new Error(`Keepalive failed: ${resp.status}`);
+      throw new Error(`Keepalive for sandbox '${id}' failed (${resp.status})`);
     }
   }
 

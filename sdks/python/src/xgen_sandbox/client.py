@@ -8,6 +8,24 @@ from .types import CreateSandboxOptions, SandboxInfo
 
 
 class XgenClient:
+    """Client for the xgen-sandbox API.
+
+    Manages sandbox lifecycle: creation, retrieval, and listing.
+    Use as an async context manager to ensure proper cleanup.
+
+    Example::
+
+        async with XgenClient(api_key="my-key", agent_url="http://localhost:8080") as client:
+            sandbox = await client.create_sandbox(template="nodejs")
+            result = await sandbox.exec("node -v")
+            print(result.stdout)
+            await sandbox.destroy()
+
+    Args:
+        api_key: API key for authentication with the xgen-sandbox agent.
+        agent_url: Base URL of the xgen-sandbox agent (e.g. ``"http://localhost:8080"``).
+    """
+
     def __init__(self, api_key: str, agent_url: str) -> None:
         self._http = HttpTransport(agent_url, api_key)
 
@@ -20,6 +38,23 @@ class XgenClient:
         gui: bool | None = None,
         metadata: dict[str, str] | None = None,
     ) -> Sandbox:
+        """Create a new sandbox and wait for it to become ready.
+
+        Args:
+            template: Runtime template (e.g. ``"base"``, ``"nodejs"``, ``"python"``, ``"gui"``).
+            timeout_seconds: Sandbox auto-destroy timeout in seconds.
+            env: Environment variables injected into the sandbox.
+            ports: Ports to expose via preview URLs.
+            gui: Enable GUI (VNC) desktop environment.
+            metadata: Arbitrary key-value metadata.
+
+        Returns:
+            A :class:`~xgen_sandbox.Sandbox` instance in "running" state.
+
+        Raises:
+            TimeoutError: If the sandbox does not become ready within 60 seconds.
+            RuntimeError: If the sandbox enters an error or stopped state.
+        """
         options = CreateSandboxOptions(
             template=template,
             timeout_seconds=timeout_seconds,
@@ -35,13 +70,30 @@ class XgenClient:
         return Sandbox(info, self._http)
 
     async def get_sandbox(self, sandbox_id: str) -> Sandbox:
+        """Get an existing sandbox by ID.
+
+        Args:
+            sandbox_id: The unique sandbox identifier.
+
+        Returns:
+            A :class:`~xgen_sandbox.Sandbox` instance.
+
+        Raises:
+            RuntimeError: If the sandbox does not exist.
+        """
         info = await self._http.get_sandbox(sandbox_id)
         return Sandbox(info, self._http)
 
     async def list_sandboxes(self) -> list[SandboxInfo]:
+        """List all active sandboxes.
+
+        Returns:
+            A list of :class:`~xgen_sandbox.SandboxInfo` objects.
+        """
         return await self._http.list_sandboxes()
 
     async def close(self) -> None:
+        """Close the HTTP client and release resources."""
         await self._http.close()
 
     async def _wait_for_running(self, sandbox_id: str, timeout_ms: int) -> None:
