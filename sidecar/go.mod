@@ -1,6 +1,6 @@
 module github.com/xgen-sandbox/sidecar
 
-go 1.22.0
+go 1.24.0
 
 require (
 	github.com/creack/pty v1.1.21
