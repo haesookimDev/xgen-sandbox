@@ -50,6 +50,7 @@ type envelope struct {
 	Channel uint32
 	ID      uint32
 	Payload []byte
+	conn    *websocket.Conn // originating connection for replies
 }
 
 func decodeEnvelope(data []byte) (*envelope, error) {
@@ -151,6 +152,7 @@ func (s *Server) readLoop(ctx context.Context, conn *websocket.Conn) {
 			continue
 		}
 
+		env.conn = conn
 		log.Printf("recv msg type=0x%02x channel=%d id=%d payloadLen=%d", env.Type, env.Channel, env.ID, len(env.Payload))
 		go s.handleMessage(ctx, env)
 	}
@@ -208,7 +210,7 @@ type execStartPayload struct {
 func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 	var payload execStartPayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 
@@ -223,7 +225,7 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 	})
 	if err != nil {
 		log.Printf("exec start failed: %v (command=%s args=%v)", err, payload.Command, payload.Args)
-		s.sendError(env.Channel, env.ID, "exec_failed", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "exec_failed", err.Error())
 		return
 	}
 
@@ -233,9 +235,12 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 		chanID = s.chanID.Add(1)
 	}
 
+	// Capture the originating connection for all responses in this exec session
+	replyConn := env.conn
+
 	// ACK with the channel and process ID
 	ackPayload, _ := msgpack.Marshal(map[string]uint32{"process_id": proc.ID, "channel": chanID})
-	s.sendEnvelope(&envelope{Type: MsgAck, Channel: chanID, ID: env.ID, Payload: ackPayload})
+	s.sendEnvelope(&envelope{Type: MsgAck, Channel: chanID, ID: env.ID, Payload: ackPayload, conn: replyConn})
 
 	// Stream stdout/stderr, tracking completion with a WaitGroup so that
 	// ExecExit is only sent after all output has been flushed to the client.
@@ -245,7 +250,7 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.streamOutput(ctx, stdout, MsgExecStdout, chanID, proc)
+			s.streamOutputTo(ctx, replyConn, stdout, MsgExecStdout, chanID, proc)
 		}()
 	}
 
@@ -253,7 +258,7 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.streamOutput(ctx, stderr, MsgExecStderr, chanID, proc)
+			s.streamOutputTo(ctx, replyConn, stderr, MsgExecStderr, chanID, proc)
 		}()
 	}
 
@@ -262,20 +267,20 @@ func (s *Server) handleExecStart(ctx context.Context, env *envelope) {
 		<-proc.Done()
 		wg.Wait()
 		exitPayload, _ := msgpack.Marshal(map[string]int{"exit_code": proc.ExitCode()})
-		s.sendEnvelope(&envelope{Type: MsgExecExit, Channel: chanID, Payload: exitPayload})
+		s.sendEnvelope(&envelope{Type: MsgExecExit, Channel: chanID, Payload: exitPayload, conn: replyConn})
 		proc.Close()
 		s.execMgr.Remove(proc.ID)
 	}()
 }
 
-func (s *Server) streamOutput(ctx context.Context, r io.Reader, msgType uint8, chanID uint32, proc *execpkg.Process) {
+func (s *Server) streamOutputTo(ctx context.Context, conn *websocket.Conn, r io.Reader, msgType uint8, chanID uint32, proc *execpkg.Process) {
 	buf := make([]byte, 4096)
 	for {
 		n, err := r.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			s.sendEnvelope(&envelope{Type: msgType, Channel: chanID, Payload: data})
+			s.sendEnvelope(&envelope{Type: msgType, Channel: chanID, Payload: data, conn: conn})
 		}
 		if err != nil {
 			return
@@ -344,17 +349,17 @@ type fsReadPayload struct {
 func (s *Server) handleFsRead(env *envelope) {
 	var payload fsReadPayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 
 	content, err := s.fsHandler.ReadFile(payload.Path)
 	if err != nil {
-		s.sendError(env.Channel, env.ID, "fs_error", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "fs_error", err.Error())
 		return
 	}
 
-	s.sendEnvelope(&envelope{Type: MsgFsRead, Channel: env.Channel, ID: env.ID, Payload: content})
+	s.sendEnvelope(&envelope{Type: MsgFsRead, Channel: env.Channel, ID: env.ID, Payload: content, conn: env.conn})
 }
 
 type fsWritePayload struct {
@@ -366,16 +371,16 @@ type fsWritePayload struct {
 func (s *Server) handleFsWrite(env *envelope) {
 	var payload fsWritePayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 
 	if err := s.fsHandler.WriteFile(payload.Path, payload.Content, 0644); err != nil {
-		s.sendError(env.Channel, env.ID, "fs_error", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "fs_error", err.Error())
 		return
 	}
 
-	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID})
+	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID, conn: env.conn})
 }
 
 type fsListPayload struct {
@@ -385,18 +390,18 @@ type fsListPayload struct {
 func (s *Server) handleFsList(env *envelope) {
 	var payload fsListPayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 
 	entries, err := s.fsHandler.ListDir(payload.Path)
 	if err != nil {
-		s.sendError(env.Channel, env.ID, "fs_error", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "fs_error", err.Error())
 		return
 	}
 
 	data, _ := msgpack.Marshal(entries)
-	s.sendEnvelope(&envelope{Type: MsgFsList, Channel: env.Channel, ID: env.ID, Payload: data})
+	s.sendEnvelope(&envelope{Type: MsgFsList, Channel: env.Channel, ID: env.ID, Payload: data, conn: env.conn})
 }
 
 type fsRemovePayload struct {
@@ -407,16 +412,16 @@ type fsRemovePayload struct {
 func (s *Server) handleFsRemove(env *envelope) {
 	var payload fsRemovePayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 
 	if err := s.fsHandler.Remove(payload.Path, payload.Recursive); err != nil {
-		s.sendError(env.Channel, env.ID, "fs_error", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "fs_error", err.Error())
 		return
 	}
 
-	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID})
+	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID, conn: env.conn})
 }
 
 // --- File watch handler ---
@@ -429,30 +434,33 @@ type fsWatchPayload struct {
 func (s *Server) handleFsWatch(env *envelope) {
 	var payload fsWatchPayload
 	if err := msgpack.Unmarshal(env.Payload, &payload); err != nil {
-		s.sendError(env.Channel, env.ID, "invalid_payload", err.Error())
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
 	if s.watcher == nil {
-		s.sendError(env.Channel, env.ID, "watcher_error", "watcher not initialized")
+		s.sendErrorTo(env.conn, env.Channel, env.ID, "watcher_error", "watcher not initialized")
 		return
 	}
 	if payload.Unwatch {
 		s.watcher.Unwatch(payload.Path)
 	} else {
 		if err := s.watcher.Watch(payload.Path); err != nil {
-			s.sendError(env.Channel, env.ID, "watch_error", err.Error())
+			s.sendErrorTo(env.conn, env.Channel, env.ID, "watch_error", err.Error())
 			return
 		}
 	}
-	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID})
+	s.sendEnvelope(&envelope{Type: MsgAck, Channel: env.Channel, ID: env.ID, conn: env.conn})
 }
 
 // --- Helpers ---
 
 func (s *Server) sendEnvelope(env *envelope) {
-	s.connMu.Lock()
-	conn := s.conn
-	s.connMu.Unlock()
+	conn := env.conn
+	if conn == nil {
+		s.connMu.Lock()
+		conn = s.conn
+		s.connMu.Unlock()
+	}
 
 	if conn == nil {
 		log.Printf("send msg type=0x%02x: no connection", env.Type)
@@ -466,8 +474,12 @@ func (s *Server) sendEnvelope(env *envelope) {
 }
 
 func (s *Server) sendError(channel, id uint32, code, message string) {
+	s.sendErrorTo(nil, channel, id, code, message)
+}
+
+func (s *Server) sendErrorTo(conn *websocket.Conn, channel, id uint32, code, message string) {
 	payload, _ := msgpack.Marshal(map[string]string{"code": code, "message": message})
-	s.sendEnvelope(&envelope{Type: MsgError, Channel: channel, ID: id, Payload: payload})
+	s.sendEnvelope(&envelope{Type: MsgError, Channel: channel, ID: id, Payload: payload, conn: conn})
 }
 
 func (s *Server) sendPortEvent(msgType uint8, p uint16) {

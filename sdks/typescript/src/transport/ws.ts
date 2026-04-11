@@ -59,20 +59,21 @@ export class WsTransport {
       this.ws = createWebSocket(wsUrl);
       this.ws.binaryType = "arraybuffer";
 
+      console.log("[ws] connecting to", wsUrl);
       this.ws.addEventListener("open", () => {
+        console.log("[ws] connected");
         this.connected = true;
         this.reconnectAttempts = 0;
         this.connectPromise = null;
         resolve();
       });
 
-      this.ws.addEventListener("message", async (event: any) => {
+      this.ws.addEventListener("message", (event: any) => {
+        console.log("[ws] raw message received, type:", typeof (event.data ?? event), "constructor:", (event.data ?? event)?.constructor?.name);
         const raw = event.data ?? event;
         let bytes: Uint8Array;
         if (raw instanceof ArrayBuffer) {
           bytes = new Uint8Array(raw);
-        } else if (typeof Blob !== "undefined" && raw instanceof Blob) {
-          bytes = new Uint8Array(await raw.arrayBuffer());
         } else if (raw instanceof Uint8Array) {
           bytes = raw;
         } else {
@@ -82,13 +83,15 @@ export class WsTransport {
         this.handleMessage(bytes);
       });
 
-      this.ws.addEventListener("close", () => {
+      this.ws.addEventListener("close", (ev: any) => {
+        console.log("[ws] closed, code:", ev?.code, "reason:", ev?.reason);
         this.connected = false;
         this.connectPromise = null;
         this.attemptReconnect();
       });
 
       this.ws.addEventListener("error", (err: any) => {
+        console.log("[ws] error", err);
         this.connectPromise = null;
         if (!this.connected) {
           reject(err);
@@ -118,6 +121,7 @@ export class WsTransport {
     if (!this.ws || !this.connected) {
       throw new Error("Not connected");
     }
+    console.log(`[ws] send type=0x${envelope.type.toString(16)} ch=${envelope.channel} id=${envelope.id} len=${envelope.payload.length}`);
     const data = encodeEnvelope(envelope);
     this.ws.send(data);
   }
@@ -169,9 +173,12 @@ export class WsTransport {
     let envelope: Envelope;
     try {
       envelope = decodeEnvelope(data);
-    } catch {
+    } catch (e) {
+      console.warn("[ws] decode failed, len=", data.length, e);
       return;
     }
+
+    console.log(`[ws] recv type=0x${envelope.type.toString(16)} ch=${envelope.channel} id=${envelope.id} len=${envelope.payload.length}`);
 
     // Handle ping/pong
     if (envelope.type === MsgType.Ping) {
@@ -188,6 +195,7 @@ export class WsTransport {
     if (envelope.id > 0) {
       const pending = this.pendingRequests.get(envelope.id);
       if (pending) {
+        console.log(`[ws] matched pending request id=${envelope.id}`);
         this.pendingRequests.delete(envelope.id);
         if (envelope.type === MsgType.Error) {
           pending.reject(new Error(`Server error`));
@@ -196,6 +204,7 @@ export class WsTransport {
         }
         return;
       }
+      console.log(`[ws] no pending request for id=${envelope.id}`);
     }
 
     // Dispatch to type handlers

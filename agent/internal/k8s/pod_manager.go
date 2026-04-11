@@ -226,7 +226,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 				ReadOnlyRootFilesystem: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
-					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE"},
+					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN"},
 				},
 			},
 			ReadinessProbe: &corev1.Probe{
