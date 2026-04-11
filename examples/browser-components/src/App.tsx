@@ -77,8 +77,11 @@ export function App() {
             timeoutSeconds: 600,
           });
           sessionStorage.setItem("xgen-sandbox-id", sbx.id);
+        }
 
-          // Write and start a simple HTTP server for preview demo
+        // Ensure server.js exists and is running
+        const check = await sbx.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null || echo 'down'");
+        if (check.stdout.trim() !== "200") {
           await sbx.writeFile(
             "server.js",
             `const http = require('http');
@@ -87,7 +90,6 @@ http.createServer((req, res) => {
   res.end('<h1>Hello from xgen-sandbox!</h1>');
 }).listen(3000, '0.0.0.0', () => console.log('Server on port 3000'));`
           );
-          // Start server via execStream (non-blocking)
           const iter = sbx.execStream("node server.js");
           for await (const event of iter) {
             if (event.type === "stdout" && event.data?.includes("Server on port 3000")) {

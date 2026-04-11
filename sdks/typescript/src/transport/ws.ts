@@ -1,4 +1,3 @@
-import WebSocket from "ws";
 import {
   type Envelope,
   decodeEnvelope,
@@ -6,10 +5,32 @@ import {
   MsgType,
 } from "../protocol/codec.js";
 
+type WebSocketLike = {
+  binaryType: string;
+  readyState: number;
+  close(): void;
+  send(data: ArrayBuffer | Uint8Array): void;
+  addEventListener(type: string, listener: (event: any) => void): void;
+  removeEventListener(type: string, listener: (event: any) => void): void;
+};
+
+const OPEN = 1;
+
+function createWebSocket(url: string): WebSocketLike {
+  // Use native WebSocket in browser, ws in Node.js
+  if (typeof globalThis.WebSocket !== "undefined") {
+    return new globalThis.WebSocket(url) as unknown as WebSocketLike;
+  }
+  // Dynamic require for Node.js ws package
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const WS = require("ws");
+  return new WS(url) as WebSocketLike;
+}
+
 export type MessageHandler = (envelope: Envelope) => void;
 
 export class WsTransport {
-  private ws: WebSocket | null = null;
+  private ws: WebSocketLike | null = null;
   private url: string;
   private token: string;
   private handlers = new Map<number, MessageHandler[]>(); // type -> handlers
@@ -35,35 +56,36 @@ export class WsTransport {
 
     this.connectPromise = new Promise<void>((resolve, reject) => {
       const wsUrl = `${this.url}?token=${encodeURIComponent(this.token)}`;
-      this.ws = new WebSocket(wsUrl);
+      this.ws = createWebSocket(wsUrl);
       this.ws.binaryType = "arraybuffer";
 
-      this.ws.on("open", () => {
+      this.ws.addEventListener("open", () => {
         this.connected = true;
         this.reconnectAttempts = 0;
         this.connectPromise = null;
         resolve();
       });
 
-      this.ws.on("message", (data: WebSocket.Data) => {
+      this.ws.addEventListener("message", (event: any) => {
+        const raw = event.data ?? event;
         const bytes =
-          data instanceof ArrayBuffer
-            ? new Uint8Array(data)
+          raw instanceof ArrayBuffer
+            ? new Uint8Array(raw)
             : new Uint8Array(
-                (data as Buffer).buffer,
-                (data as Buffer).byteOffset,
-                (data as Buffer).byteLength
+                (raw as Buffer).buffer,
+                (raw as Buffer).byteOffset,
+                (raw as Buffer).byteLength
               );
         this.handleMessage(bytes);
       });
 
-      this.ws.on("close", () => {
+      this.ws.addEventListener("close", () => {
         this.connected = false;
         this.connectPromise = null;
         this.attemptReconnect();
       });
 
-      this.ws.on("error", (err) => {
+      this.ws.addEventListener("error", (err: any) => {
         this.connectPromise = null;
         if (!this.connected) {
           reject(err);
