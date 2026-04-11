@@ -261,7 +261,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	if gui {
 		containers = append(containers, corev1.Container{
 			Name:            "vnc",
-			Image:           "ghcr.io/xgen-sandbox/novnc:latest",
+			Image:           "ghcr.io/xgen-sandbox/runtime-gui:latest",
 			ImagePullPolicy: pm.pullPolicy,
 			SecurityContext: restrictedSC,
 			Ports: []corev1.ContainerPort{
