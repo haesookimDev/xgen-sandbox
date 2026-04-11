@@ -136,9 +136,7 @@ class HttpTransport:
         cwd: str | None = None,
         timeout_seconds: int | None = None,
     ) -> ExecResult:
-        body: dict = {"command": command}
-        if args is not None:
-            body["args"] = args
+        body: dict = {"command": "sh", "args": ["-c", command, *(args or [])]}
         if env is not None:
             body["env"] = env
         if cwd is not None:

@@ -111,8 +111,8 @@ class Sandbox:
 
         try:
             payload = encode_payload({
-                "command": command,
-                "args": args or [],
+                "command": "sh",
+                "args": ["-c", command, *(args or [])],
                 "env": env or {},
                 "cwd": cwd or "",
                 "tty": False,

@@ -48,23 +48,16 @@ async def main() -> None:
             # Write the server file
             await sandbox.write_file("server.js", SERVER_CODE)
 
-            # Listen for port open events
-            port_watcher = sandbox.on_port_open(
-                lambda port: print(f"Port {port} is now open! Visit: {sandbox.get_preview_url(port)}")
-            )
-
-            # Start the server
+            # Start the server (non-blocking via exec_stream)
             print("\nStarting web server...")
-            result = await sandbox.exec("node server.js &")
-            print(f"Server started (exit code: {result.exit_code})")
-
-            # Verify the server is running
-            await asyncio.sleep(2)
-            check = await sandbox.exec("curl -s http://localhost:3000")
-            print(f"Response: {check.stdout[:80]}...")
-
-            print(f"\nServer is ready! Open: {sandbox.get_preview_url(3000)}")
-            print("Press Ctrl+C to stop.")
+            print("Server output:")
+            async for event in sandbox.exec_stream("node server.js"):
+                if event.type == "stdout":
+                    print(f"  {event.data}", end="")
+                    if "Server running" in (event.data or ""):
+                        print(f"\nServer is ready! Open: {sandbox.get_preview_url(3000)}")
+                        print("Press Ctrl+C to stop.")
+                        break
 
             # Wait until interrupted
             stop = asyncio.Event()

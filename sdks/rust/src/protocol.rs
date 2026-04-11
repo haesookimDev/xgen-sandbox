@@ -69,7 +69,7 @@ pub fn decode_envelope(data: &[u8]) -> Result<Envelope, Error> {
 }
 
 pub fn encode_payload<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, Error> {
-    rmp_serde::to_vec(value).map_err(|e| Error::Protocol(format!("msgpack encode error: {e}")))
+    rmp_serde::to_vec_named(value).map_err(|e| Error::Protocol(format!("msgpack encode error: {e}")))
 }
 
 pub fn decode_payload<T: serde::de::DeserializeOwned>(data: &[u8]) -> Result<T, Error> {

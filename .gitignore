@@ -14,3 +14,5 @@ node_modules/
 
 **/rust/target/
 **/__pycache__/**
+examples/**/target/
+examples/**/__pycache__/**
