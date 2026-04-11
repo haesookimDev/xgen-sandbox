@@ -26,7 +26,7 @@ func getEnv(key, fallback string) string {
 }
 
 func main() {
-	apiKey := getEnv("API_KEY", "xgen_dev_key")
+	apiKey := getEnv("API_KEY", "xgen-local-api-key-2026")
 	agentURL := getEnv("AGENT_URL", "http://localhost:8080")
 
 	ctx := context.Background()

@@ -31,7 +31,7 @@ server.listen(3000, '0.0.0.0', () => {
 
 
 async def main() -> None:
-    api_key = os.environ.get("API_KEY", "xgen_dev_key")
+    api_key = os.environ.get("API_KEY", "xgen-local-api-key-2026")
     agent_url = os.environ.get("AGENT_URL", "http://localhost:8080")
 
     async with XgenClient(api_key=api_key, agent_url=agent_url) as client:

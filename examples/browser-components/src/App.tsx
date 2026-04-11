@@ -19,7 +19,7 @@ import {
 } from "@xgen-sandbox/browser";
 import { XgenClient, Sandbox } from "@xgen-sandbox/sdk";
 
-const API_KEY = "xgen_dev_key";
+const API_KEY = "xgen-local-api-key-2026";
 const AGENT_URL = "http://localhost:8080";
 
 type Tab = "preview" | "terminal" | "desktop" | "files";

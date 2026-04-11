@@ -15,7 +15,7 @@ fn env_or(key: &str, fallback: &str) -> String {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let api_key = env_or("API_KEY", "xgen_dev_key");
+    let api_key = env_or("API_KEY", "xgen-local-api-key-2026");
     let agent_url = env_or("AGENT_URL", "http://localhost:8080");
 
     let client = XgenClient::new(&api_key, &agent_url);
