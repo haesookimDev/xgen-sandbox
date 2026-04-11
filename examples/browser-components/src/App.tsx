@@ -51,34 +51,57 @@ export function App() {
         if (destroyed) return;
         setToken(jwt);
 
-        setStatus("Creating sandbox...");
         const client = new XgenClient({ apiKey: API_KEY, agentUrl: AGENT_URL });
         clientRef.current = client;
 
-        const sbx = await client.createSandbox({
-          template: "gui",
-          gui: true,
-          ports: [3000],
-          timeoutSeconds: 600,
-        });
+        // Reuse existing sandbox from session if available
+        const savedId = sessionStorage.getItem("xgen-sandbox-id");
+        let sbx: Sandbox | null = null;
+
+        if (savedId) {
+          try {
+            setStatus(`Reconnecting to sandbox ${savedId}...`);
+            sbx = await client.getSandbox(savedId);
+          } catch {
+            sessionStorage.removeItem("xgen-sandbox-id");
+            sbx = null;
+          }
+        }
+
+        if (!sbx) {
+          setStatus("Creating sandbox...");
+          sbx = await client.createSandbox({
+            template: "nodejs",
+            gui: true,
+            ports: [3000],
+            timeoutSeconds: 600,
+          });
+          sessionStorage.setItem("xgen-sandbox-id", sbx.id);
+
+          // Write and start a simple HTTP server for preview demo
+          await sbx.writeFile(
+            "server.js",
+            `const http = require('http');
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end('<h1>Hello from xgen-sandbox!</h1>');
+}).listen(3000, '0.0.0.0', () => console.log('Server on port 3000'));`
+          );
+          // Start server via execStream (non-blocking)
+          const iter = sbx.execStream("node server.js");
+          for await (const event of iter) {
+            if (event.type === "stdout" && event.data?.includes("Server on port 3000")) {
+              break;
+            }
+          }
+        }
+
         if (destroyed) {
-          await sbx.destroy();
           return;
         }
 
         setSandbox(sbx);
         setStatus(`Sandbox ready: ${sbx.id}`);
-
-        // Write a simple HTTP server for preview demo
-        await sbx.writeFile(
-          "server.js",
-          `const http = require('http');
-http.createServer((req, res) => {
-  res.writeHead(200, { 'Content-Type': 'text/html' });
-  res.end('<h1>Hello from xgen-sandbox!</h1>');
-}).listen(3000, '0.0.0.0', () => console.log('Server on port 3000'));`
-        );
-        await sbx.exec("node server.js &");
       } catch (err) {
         if (!destroyed) {
           setStatus(`Error: ${err instanceof Error ? err.message : err}`);
@@ -90,7 +113,6 @@ http.createServer((req, res) => {
 
     return () => {
       destroyed = true;
-      // Cleanup is best-effort
     };
   }, []);
 

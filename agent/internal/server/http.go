@@ -88,6 +88,7 @@ func (s *Server) Handler() http.Handler {
 func (s *Server) apiHandler() http.Handler {
 	r := chi.NewRouter()
 
+	r.Use(corsMiddleware)
 	r.Use(structuredLogger(s.logger))
 	r.Use(middleware.Recoverer)
 	r.Use(middleware.RequestID)

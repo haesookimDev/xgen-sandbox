@@ -140,8 +140,10 @@ func proxyWebSocket(w http.ResponseWriter, r *http.Request, target *url.URL) {
 	}
 
 	// Forward the original request to the backend
-	r.URL = target
+	r.URL.Scheme = target.Scheme
+	r.URL.Host = target.Host
 	r.Host = target.Host
+	r.RequestURI = ""
 	if err := r.Write(backend); err != nil {
 		log.Printf("ws proxy: write request to backend: %v", err)
 		http.Error(w, "backend write error", http.StatusBadGateway)

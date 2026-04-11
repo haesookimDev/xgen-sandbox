@@ -259,11 +259,16 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 
 	// Add VNC container if GUI is requested
 	if gui {
+		vncSC := &corev1.SecurityContext{
+			RunAsUser:                &sandboxUser,
+			RunAsNonRoot:             boolPtr(true),
+			AllowPrivilegeEscalation: boolPtr(false),
+		}
 		containers = append(containers, corev1.Container{
 			Name:            "vnc",
 			Image:           "ghcr.io/xgen-sandbox/runtime-gui:latest",
 			ImagePullPolicy: pm.pullPolicy,
-			SecurityContext: restrictedSC,
+			SecurityContext: vncSC,
 			Ports: []corev1.ContainerPort{
 				{Name: "novnc", ContainerPort: 6080},
 			},
