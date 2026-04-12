@@ -100,26 +100,31 @@ func (p *WSProxy) HandleClientWS(w http.ResponseWriter, r *http.Request, sandbox
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		proxyWS(ctx, clientConn, sidecarConn)
+		proxyWS(ctx, clientConn, sidecarConn, "client->sidecar")
 	}()
 
 	// Sidecar -> Client
 	go func() {
 		defer wg.Done()
 		defer cancel()
-		proxyWS(ctx, sidecarConn, clientConn)
+		proxyWS(ctx, sidecarConn, clientConn, "sidecar->client")
 	}()
 
 	wg.Wait()
 }
 
-func proxyWS(ctx context.Context, src, dst *websocket.Conn) {
+func proxyWS(ctx context.Context, src, dst *websocket.Conn, direction string) {
 	for {
 		msgType, data, err := src.Read(ctx)
 		if err != nil {
+			log.Printf("ws proxy [%s]: read error: %v", direction, err)
 			return
 		}
+		if len(data) >= 1 {
+			log.Printf("ws proxy [%s]: forwarding msg type=0x%02x len=%d", direction, data[0], len(data))
+		}
 		if err := dst.Write(ctx, msgType, data); err != nil {
+			log.Printf("ws proxy [%s]: write error: %v", direction, err)
 			return
 		}
 	}

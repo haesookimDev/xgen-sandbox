@@ -74,13 +74,18 @@ func encodeEnvelope(e *envelope) []byte {
 	return buf
 }
 
+// connState holds per-connection state that is isolated from other connections.
+type connState struct {
+	conn    *websocket.Conn
+	portDet *port.Detector
+	watcher *fspkg.Watcher
+}
+
 // Server is the sidecar WebSocket server that handles agent connections.
 type Server struct {
 	execMgr   *execpkg.Manager
 	fsHandler *fspkg.Handler
-	portDet   *port.Detector
-	watcher   *fspkg.Watcher
-	conn      *websocket.Conn
+	active    *connState
 	connMu    sync.Mutex
 	chanID    atomic.Uint32
 }
@@ -108,28 +113,30 @@ func (s *Server) Handler() http.Handler {
 		defer conn.CloseNow()
 
 		log.Printf("ws connection accepted from %s", r.RemoteAddr)
+
 		s.connMu.Lock()
-		s.conn = conn
+		cs := &connState{conn: conn}
+		s.active = cs
 		s.connMu.Unlock()
 
 		// Start port detector
-		s.portDet = port.NewDetector(
+		cs.portDet = port.NewDetector(
 			func(p uint16) { s.sendPortEvent(MsgPortOpen, p) },
 			func(p uint16) { s.sendPortEvent(MsgPortClose, p) },
 		)
-		s.portDet.Start()
-		defer s.portDet.Stop()
+		cs.portDet.Start()
+		defer cs.portDet.Stop()
 
 		// Start file watcher
-		s.watcher = fspkg.NewWatcher("/home/sandbox/workspace", func(evt fspkg.FsEvent) {
+		cs.watcher = fspkg.NewWatcher("/home/sandbox/workspace", func(evt fspkg.FsEvent) {
 			payload, _ := msgpack.Marshal(evt)
 			s.sendEnvelope(&envelope{Type: MsgFsEvent, Payload: payload})
 		})
-		s.watcher.Start()
-		defer s.watcher.Stop()
+		cs.watcher.Start()
+		defer cs.watcher.Stop()
 
 		// Send ready signal
-		s.sendEnvelope(&envelope{Type: MsgSandboxReady})
+		s.sendEnvelope(&envelope{Type: MsgSandboxReady, conn: conn})
 
 		ctx := r.Context()
 		s.readLoop(ctx, conn)
@@ -437,14 +444,17 @@ func (s *Server) handleFsWatch(env *envelope) {
 		s.sendErrorTo(env.conn, env.Channel, env.ID, "invalid_payload", err.Error())
 		return
 	}
-	if s.watcher == nil {
+	s.connMu.Lock()
+	watcher := s.active.watcher
+	s.connMu.Unlock()
+	if watcher == nil {
 		s.sendErrorTo(env.conn, env.Channel, env.ID, "watcher_error", "watcher not initialized")
 		return
 	}
 	if payload.Unwatch {
-		s.watcher.Unwatch(payload.Path)
+		watcher.Unwatch(payload.Path)
 	} else {
-		if err := s.watcher.Watch(payload.Path); err != nil {
+		if err := watcher.Watch(payload.Path); err != nil {
 			s.sendErrorTo(env.conn, env.Channel, env.ID, "watch_error", err.Error())
 			return
 		}
@@ -458,7 +468,9 @@ func (s *Server) sendEnvelope(env *envelope) {
 	conn := env.conn
 	if conn == nil {
 		s.connMu.Lock()
-		conn = s.conn
+		if s.active != nil {
+			conn = s.active.conn
+		}
 		s.connMu.Unlock()
 	}
 

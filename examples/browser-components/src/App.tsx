@@ -80,7 +80,10 @@ export function App() {
         }
 
         // Ensure server.js exists and is running
-        const check = await sbx.exec("curl -s -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null || echo 'down'");
+        const check = await sbx.exec(
+          "curl --connect-timeout 3 --max-time 5 -s -o /dev/null -w '%{http_code}' http://localhost:3000 2>/dev/null || echo 'down'",
+          { timeout: 10_000 }
+        );
         if (check.stdout.trim() !== "200") {
           await sbx.writeFile(
             "server.js",
@@ -90,12 +93,22 @@ http.createServer((req, res) => {
   res.end('<h1>Hello from xgen-sandbox!</h1>');
 }).listen(3000, '0.0.0.0', () => console.log('Server on port 3000'));`
           );
-          const iter = sbx.execStream("node server.js");
-          for await (const event of iter) {
-            if (event.type === "stdout" && event.data?.includes("Server on port 3000")) {
-              break;
+
+          const startServer = async () => {
+            const iter = sbx.execStream("node server.js");
+            for await (const event of iter) {
+              if (event.type === "stdout" && event.data?.includes("Server on port 3000")) {
+                return;
+              }
             }
-          }
+          };
+
+          await Promise.race([
+            startServer(),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error("Server start timeout")), 30_000)
+            ),
+          ]);
         }
 
         if (destroyed) {

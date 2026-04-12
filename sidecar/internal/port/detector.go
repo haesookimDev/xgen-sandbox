@@ -37,9 +37,14 @@ func (d *Detector) Start() {
 	go d.loop()
 }
 
-// Stop stops the detector.
+// Stop stops the detector. Safe to call multiple times.
 func (d *Detector) Stop() {
-	close(d.stopCh)
+	select {
+	case <-d.stopCh:
+		// already stopped
+	default:
+		close(d.stopCh)
+	}
 }
 
 func (d *Detector) loop() {

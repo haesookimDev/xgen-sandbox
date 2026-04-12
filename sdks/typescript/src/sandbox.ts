@@ -54,14 +54,17 @@ export class Sandbox {
     return this.info.previewUrls[port];
   }
 
-  /** Ensure WebSocket connection is established */
+  /** Ensure WebSocket connection is established and sidecar is ready */
   private async ensureWs(): Promise<WsTransport> {
     if (this.ws) return this.ws;
 
     const wsUrl = this.http.getWsUrl(this.id);
     const token = this.http.getToken()!;
-    this.ws = new WsTransport(wsUrl, token);
-    await this.ws.connect();
+    const ws = new WsTransport(wsUrl, token);
+    const ready = ws.waitForReady(); // register handler BEFORE connect
+    await ws.connect();
+    await ready;
+    this.ws = ws;
     return this.ws;
   }
 
@@ -71,7 +74,7 @@ export class Sandbox {
    */
   async exec(command: string, options?: ExecOptions): Promise<ExecResult> {
     const ws = await this.ensureWs();
-    const channel = Date.now() & 0xffffffff;
+    const channel = (Date.now() & 0xffffffff) >>> 0;
 
     let stdout = "";
     let stderr = "";
@@ -150,7 +153,7 @@ export class Sandbox {
     options?: ExecOptions
   ): AsyncIterable<ExecEvent> {
     const ws = await this.ensureWs();
-    const channel = Date.now() & 0xffffffff;
+    const channel = (Date.now() & 0xffffffff) >>> 0;
 
     const events: ExecEvent[] = [];
     let done = false;
@@ -227,7 +230,7 @@ export class Sandbox {
    */
   async openTerminal(options?: TerminalOptions): Promise<Terminal> {
     const ws = await this.ensureWs();
-    const channel = Date.now() & 0xffffffff;
+    const channel = (Date.now() & 0xffffffff) >>> 0;
 
     const payload = encodePayload({
       command: "/bin/bash",

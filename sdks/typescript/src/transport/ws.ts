@@ -147,6 +147,22 @@ export class WsTransport {
     });
   }
 
+  /** Wait for the sidecar to send a SandboxReady message after connection. */
+  waitForReady(timeout = 10_000): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        cleanup();
+        reject(new Error("Timeout waiting for SandboxReady"));
+      }, timeout);
+
+      const cleanup = this.on(MsgType.SandboxReady, () => {
+        clearTimeout(timer);
+        cleanup();
+        resolve();
+      });
+    });
+  }
+
   on(type: number, handler: MessageHandler): () => void {
     const existing = this.handlers.get(type) ?? [];
     existing.push(handler);
