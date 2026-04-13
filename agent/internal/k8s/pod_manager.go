@@ -10,6 +10,7 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -173,9 +174,19 @@ var maxResourceLimits = ResourceSpec{
 	Memory: "4Gi",
 }
 
+// capSet converts a capabilities slice to a set for fast lookup.
+func capSet(capabilities []string) map[string]bool {
+	s := make(map[string]bool, len(capabilities))
+	for _, c := range capabilities {
+		s[c] = true
+	}
+	return s
+}
+
 // CreatePod creates a new sandbox pod.
-func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool, resources ...*ResourceSpec) error {
-	runtimeImage := pm.runtimeImageForTemplate(template)
+func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool, capabilities []string, resources ...*ResourceSpec) error {
+	caps := capSet(capabilities)
+	runtimeImage := pm.runtimeImageForTemplate(template, caps)
 
 	if len(env) > maxEnvVars {
 		return fmt.Errorf("too many environment variables: %d (max %d)", len(env), maxEnvVars)
@@ -192,13 +203,17 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	}
 
 	sandboxUser := int64(1000)
-	restrictedSC := &corev1.SecurityContext{
+	needsSudo := caps["sudo"] || caps["browser"]
+	runtimeSC := &corev1.SecurityContext{
 		RunAsUser:                &sandboxUser,
 		RunAsNonRoot:             boolPtr(true),
-		AllowPrivilegeEscalation: boolPtr(false),
+		AllowPrivilegeEscalation: boolPtr(needsSudo),
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
+	}
+	if needsSudo {
+		runtimeSC.Capabilities.Add = []corev1.Capability{"SETUID", "SETGID"}
 	}
 
 	rootUser := int64(0)
@@ -249,7 +264,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			ImagePullPolicy: pm.pullPolicy,
 			Command:         []string{"sleep", "infinity"},
 			Env:             envVars,
-			SecurityContext: restrictedSC,
+			SecurityContext: runtimeSC,
 			Resources:       runtimeResources(resources...),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/home/sandbox/workspace"},
@@ -288,16 +303,22 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		})
 	}
 
+	// Build pod labels including capability markers
+	labels := map[string]string{
+		"app.kubernetes.io/name": "xgen-sandbox",
+		"xgen.io/sandbox-id":    sandboxID,
+		"xgen.io/template":      template,
+	}
+	for _, c := range capabilities {
+		labels["xgen.io/cap-"+c] = "true"
+	}
+
 	shareProcessNamespace := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sbx-" + sandboxID,
 			Namespace: pm.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name": "xgen-sandbox",
-				"xgen.io/sandbox-id":    sandboxID,
-				"xgen.io/template":      template,
-			},
+			Labels:    labels,
 		},
 		Spec: corev1.PodSpec{
 			ShareProcessNamespace:        &shareProcessNamespace,
@@ -328,11 +349,85 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		return fmt.Errorf("create pod: %w", err)
 	}
 
+	// Create per-pod NetworkPolicy for git-ssh capability
+	if caps["git-ssh"] {
+		if err := pm.createGitSSHNetworkPolicy(ctx, sandboxID); err != nil {
+			log.Printf("warning: failed to create git-ssh network policy for %s: %v", sandboxID, err)
+		}
+	}
+
 	return nil
+}
+
+// createGitSSHNetworkPolicy creates a per-pod NetworkPolicy allowing port 22 egress.
+func (pm *PodManager) createGitSSHNetworkPolicy(ctx context.Context, sandboxID string) error {
+	port22 := intstr.FromInt32(22)
+	tcp := corev1.ProtocolTCP
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sbx-" + sandboxID + "-git-ssh",
+			Namespace: pm.namespace,
+			Labels: map[string]string{
+				"xgen.io/sandbox-id": sandboxID,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"xgen.io/sandbox-id":  sandboxID,
+					"xgen.io/cap-git-ssh": "true",
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Port: &port22, Protocol: &tcp},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).Create(ctx, np, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create git-ssh network policy: %w", err)
+	}
+	return nil
+}
+
+// deleteCapabilityNetworkPolicies removes any per-pod NetworkPolicies for a sandbox.
+func (pm *PodManager) deleteCapabilityNetworkPolicies(ctx context.Context, sandboxID string) {
+	nps, err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "xgen.io/sandbox-id=" + sandboxID,
+	})
+	if err != nil {
+		log.Printf("warning: failed to list network policies for %s: %v", sandboxID, err)
+		return
+	}
+	for _, np := range nps.Items {
+		if err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).Delete(ctx, np.Name, metav1.DeleteOptions{}); err != nil {
+			log.Printf("warning: failed to delete network policy %s: %v", np.Name, err)
+		}
+	}
 }
 
 // DeletePod deletes a sandbox pod with a 10-second grace period.
 func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
+	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
+
 	podName := "sbx-" + sandboxID
 	gracePeriod := int64(10)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
@@ -351,6 +446,8 @@ func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 
 // ForceDeletePod immediately deletes a sandbox pod with no grace period.
 func (pm *PodManager) ForceDeletePod(ctx context.Context, sandboxID string) error {
+	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
+
 	podName := "sbx-" + sandboxID
 	zero := int64(0)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
@@ -446,17 +543,35 @@ func (pm *PodManager) ListPods() []*PodInfo {
 	return result
 }
 
-func (pm *PodManager) runtimeImageForTemplate(template string) string {
+func (pm *PodManager) runtimeImageForTemplate(template string, caps map[string]bool) string {
+	if caps["browser"] {
+		return "ghcr.io/xgen-sandbox/runtime-gui-browser:latest"
+	}
+
+	hasSudo := caps["sudo"]
+
 	switch template {
 	case "nodejs":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-nodejs:latest"
 	case "python":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-python-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-python:latest"
 	case "go":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-go-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-go:latest"
 	case "gui":
 		return "ghcr.io/xgen-sandbox/runtime-gui:latest"
 	default:
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-base-sudo:latest"
+		}
 		return pm.runtime
 	}
 }

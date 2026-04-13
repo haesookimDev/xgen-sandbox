@@ -25,7 +25,7 @@ func TestCreatePod_BasicSpec(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "test-id", "nodejs", nil, []int{3000}, false); err != nil {
+	if err := pm.CreatePod(ctx, "test-id", "nodejs", nil, []int{3000}, false, nil); err != nil {
 		t.Fatalf("CreatePod() error: %v", err)
 	}
 
@@ -64,7 +64,7 @@ func TestCreatePod_WithGUI(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "gui-id", "gui", nil, nil, true); err != nil {
+	if err := pm.CreatePod(ctx, "gui-id", "gui", nil, nil, true, nil); err != nil {
 		t.Fatalf("CreatePod(gui=true) error: %v", err)
 	}
 
@@ -82,23 +82,32 @@ func TestCreatePod_WithGUI(t *testing.T) {
 
 func TestRuntimeImageForTemplate(t *testing.T) {
 	pm := newTestPodManager()
+	noCaps := map[string]bool{}
 
 	tests := []struct {
 		template string
+		caps     map[string]bool
 		expected string
 	}{
-		{"nodejs", "ghcr.io/xgen-sandbox/runtime-nodejs:latest"},
-		{"python", "ghcr.io/xgen-sandbox/runtime-python:latest"},
-		{"go", "ghcr.io/xgen-sandbox/runtime-go:latest"},
-		{"gui", "ghcr.io/xgen-sandbox/runtime-gui:latest"},
-		{"unknown", "runtime-base:test"}, // falls back to default runtime
-		{"base", "runtime-base:test"},
+		{"nodejs", noCaps, "ghcr.io/xgen-sandbox/runtime-nodejs:latest"},
+		{"python", noCaps, "ghcr.io/xgen-sandbox/runtime-python:latest"},
+		{"go", noCaps, "ghcr.io/xgen-sandbox/runtime-go:latest"},
+		{"gui", noCaps, "ghcr.io/xgen-sandbox/runtime-gui:latest"},
+		{"unknown", noCaps, "runtime-base:test"},
+		{"base", noCaps, "runtime-base:test"},
+		// sudo capability
+		{"nodejs", map[string]bool{"sudo": true}, "ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest"},
+		{"python", map[string]bool{"sudo": true}, "ghcr.io/xgen-sandbox/runtime-python-sudo:latest"},
+		{"base", map[string]bool{"sudo": true}, "ghcr.io/xgen-sandbox/runtime-base-sudo:latest"},
+		// browser capability
+		{"nodejs", map[string]bool{"browser": true}, "ghcr.io/xgen-sandbox/runtime-gui-browser:latest"},
+		{"base", map[string]bool{"browser": true}, "ghcr.io/xgen-sandbox/runtime-gui-browser:latest"},
 	}
 
 	for _, tt := range tests {
-		got := pm.runtimeImageForTemplate(tt.template)
+		got := pm.runtimeImageForTemplate(tt.template, tt.caps)
 		if got != tt.expected {
-			t.Errorf("runtimeImageForTemplate(%q) = %q, want %q", tt.template, got, tt.expected)
+			t.Errorf("runtimeImageForTemplate(%q, %v) = %q, want %q", tt.template, tt.caps, got, tt.expected)
 		}
 	}
 }
@@ -107,7 +116,7 @@ func TestDeletePod(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	pm.CreatePod(ctx, "del-id", "base", nil, nil, false)
+	pm.CreatePod(ctx, "del-id", "base", nil, nil, false, nil)
 
 	// Manually add to cache (normally done by watcher)
 	pm.mu.Lock()
@@ -238,12 +247,66 @@ func TestIsPodReady(t *testing.T) {
 	}
 }
 
+func TestCreatePod_WithSudoCapability(t *testing.T) {
+	pm := newTestPodManager()
+	ctx := context.Background()
+
+	if err := pm.CreatePod(ctx, "sudo-id", "nodejs", nil, nil, false, []string{"sudo"}); err != nil {
+		t.Fatalf("CreatePod(sudo) error: %v", err)
+	}
+
+	pods, _ := pm.client.CoreV1().Pods("test-ns").List(ctx, metav1.ListOptions{})
+	pod := pods.Items[0]
+
+	// Check runtime image is the sudo variant
+	runtime := pod.Spec.Containers[1]
+	if runtime.Image != "ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest" {
+		t.Errorf("expected sudo image, got %q", runtime.Image)
+	}
+
+	// Check security context allows privilege escalation
+	if runtime.SecurityContext.AllowPrivilegeEscalation == nil || !*runtime.SecurityContext.AllowPrivilegeEscalation {
+		t.Error("expected AllowPrivilegeEscalation=true for sudo")
+	}
+
+	// Check SETUID/SETGID capabilities
+	if len(runtime.SecurityContext.Capabilities.Add) != 2 {
+		t.Errorf("expected 2 added capabilities, got %d", len(runtime.SecurityContext.Capabilities.Add))
+	}
+
+	// Check capability label
+	if pod.Labels["xgen.io/cap-sudo"] != "true" {
+		t.Error("expected capability label xgen.io/cap-sudo=true")
+	}
+}
+
+func TestCreatePod_WithGitSSHCapability(t *testing.T) {
+	pm := newTestPodManager()
+	ctx := context.Background()
+
+	if err := pm.CreatePod(ctx, "ssh-id", "base", nil, nil, false, []string{"git-ssh"}); err != nil {
+		t.Fatalf("CreatePod(git-ssh) error: %v", err)
+	}
+
+	// Verify NetworkPolicy was created
+	nps, err := pm.client.NetworkingV1().NetworkPolicies("test-ns").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(nps.Items) != 1 {
+		t.Fatalf("expected 1 network policy, got %d", len(nps.Items))
+	}
+	if nps.Items[0].Name != "sbx-ssh-id-git-ssh" {
+		t.Errorf("expected policy name sbx-ssh-id-git-ssh, got %q", nps.Items[0].Name)
+	}
+}
+
 func TestCreatePod_EnvVars(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
 	env := map[string]string{"FOO": "bar", "BAZ": "qux"}
-	if err := pm.CreatePod(ctx, "env-id", "base", env, nil, false); err != nil {
+	if err := pm.CreatePod(ctx, "env-id", "base", env, nil, false, nil); err != nil {
 		t.Fatal(err)
 	}
 

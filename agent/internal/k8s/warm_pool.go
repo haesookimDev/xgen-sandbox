@@ -124,7 +124,7 @@ func (wp *WarmPool) fill(ctx context.Context, template string) {
 
 	for i := 0; i < needed; i++ {
 		id := fmt.Sprintf("warm-%s", uuid.New().String()[:8])
-		if err := wp.podMgr.CreatePod(ctx, id, template, nil, nil, false); err != nil {
+		if err := wp.podMgr.CreatePod(ctx, id, template, nil, nil, false, nil); err != nil {
 			log.Printf("warm pool: failed to create pod for %s: %v", template, err)
 			return
 		}

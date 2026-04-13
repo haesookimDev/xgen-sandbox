@@ -10,7 +10,7 @@ import (
 
 func TestManager_CreateAndGet(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, []int{3000}, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, []int{3000}, false, nil, nil, nil)
 
 	if sbx.ID == "" {
 		t.Fatal("expected non-empty sandbox ID")
@@ -41,9 +41,9 @@ func TestManager_GetNotFound(t *testing.T) {
 
 func TestManager_List(t *testing.T) {
 	m := NewManager()
-	m.Create("nodejs", time.Hour, nil, false, nil, nil)
-	m.Create("python", time.Hour, nil, false, nil, nil)
-	m.Create("go", time.Hour, nil, false, nil, nil)
+	m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
+	m.Create("python", time.Hour, nil, false, nil, nil, nil)
+	m.Create("go", time.Hour, nil, false, nil, nil, nil)
 
 	list := m.List()
 	if len(list) != 3 {
@@ -64,7 +64,7 @@ func TestManager_ListEmpty(t *testing.T) {
 
 func TestManager_SetStatus(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.SetStatus(sbx.ID, v1.StatusRunning)
 
@@ -76,7 +76,7 @@ func TestManager_SetStatus(t *testing.T) {
 
 func TestManager_SetPodIP(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.SetPodIP(sbx.ID, "10.0.0.5")
 
@@ -88,7 +88,7 @@ func TestManager_SetPodIP(t *testing.T) {
 
 func TestManager_Remove(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.Remove(sbx.ID)
 
@@ -100,7 +100,7 @@ func TestManager_Remove(t *testing.T) {
 
 func TestManager_ExtendTimeout(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Minute, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Minute, nil, false, nil, nil, nil)
 
 	err := m.ExtendTimeout(sbx.ID, 2*time.Hour)
 	if err != nil {
@@ -128,9 +128,9 @@ func TestManager_GetExpired(t *testing.T) {
 	m := NewManager()
 
 	// Create a sandbox that expires immediately
-	expired := m.Create("nodejs", time.Millisecond, nil, false, nil, nil)
+	expired := m.Create("nodejs", time.Millisecond, nil, false, nil, nil, nil)
 	// Create a sandbox with long timeout
-	m.Create("python", time.Hour, nil, false, nil, nil)
+	m.Create("python", time.Hour, nil, false, nil, nil, nil)
 
 	// Wait for the short-timeout sandbox to expire
 	time.Sleep(5 * time.Millisecond)
@@ -147,7 +147,7 @@ func TestManager_GetExpired(t *testing.T) {
 func TestManager_GetExpired_SkipsStopped(t *testing.T) {
 	m := NewManager()
 
-	sbx := m.Create("nodejs", 0, nil, false, nil, nil)
+	sbx := m.Create("nodejs", 0, nil, false, nil, nil, nil)
 	m.SetStatus(sbx.ID, v1.StatusStopped)
 
 	expiredIDs := m.GetExpired()
@@ -165,7 +165,7 @@ func TestManager_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+			sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 			m.Get(sbx.ID)
 			m.List()
 			m.SetStatus(sbx.ID, v1.StatusRunning)

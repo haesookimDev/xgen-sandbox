@@ -53,6 +53,7 @@ export class HttpTransport {
         ports: options.ports,
         gui: options.gui,
         metadata: options.metadata,
+        capabilities: options.capabilities,
       }),
     });
 
@@ -72,6 +73,7 @@ export class HttpTransport {
       createdAt: data.created_at,
       expiresAt: data.expires_at,
       metadata: data.metadata,
+      capabilities: data.capabilities,
     };
   }
 
@@ -93,6 +95,7 @@ export class HttpTransport {
       createdAt: data.created_at,
       expiresAt: data.expires_at,
       metadata: data.metadata,
+      capabilities: data.capabilities,
     };
   }
 

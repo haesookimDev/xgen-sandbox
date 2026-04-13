@@ -204,6 +204,33 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Validate capabilities
+	validCaps := map[string]bool{"sudo": true, "git-ssh": true, "browser": true}
+	seen2 := make(map[string]bool)
+	for _, c := range req.Capabilities {
+		if !validCaps[c] {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown capability: %q (valid: sudo, git-ssh, browser)", c))
+			return
+		}
+		seen2[c] = true
+	}
+	// Deduplicate
+	if len(seen2) < len(req.Capabilities) {
+		deduped := make([]string, 0, len(seen2))
+		for c := range seen2 {
+			deduped = append(deduped, c)
+		}
+		req.Capabilities = deduped
+	}
+	// browser implies gui
+	if seen2["browser"] {
+		req.GUI = true
+	}
+	// browser implies higher default resources
+	if seen2["browser"] && req.Resources == nil {
+		req.Resources = &v1.ResourceSpec{CPU: "2000m", Memory: "2Gi"}
+	}
+
 	timeout := s.cfg.DefaultTimeout
 	if req.Timeout > 0 {
 		timeout = time.Duration(req.Timeout) * time.Second
@@ -212,32 +239,36 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	sbx := s.sandboxMgr.Create(req.Template, timeout, req.Ports, req.GUI, req.Env, req.Metadata)
+	sbx := s.sandboxMgr.Create(req.Template, timeout, req.Ports, req.GUI, req.Env, req.Metadata, req.Capabilities)
 	sandboxCreateTotal.Inc()
 	sandboxesActive.Inc()
 	SandboxesByTemplate.WithLabelValues(req.Template).Inc()
 	SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Inc()
 
-	// Try warm pool first, fall back to creating a new pod
+	// Try warm pool first (only for vanilla sandboxes without capabilities),
+	// fall back to creating a new pod
 	podCreateStart := time.Now()
-	if warmID := s.warmPool.Claim(req.Template); warmID != "" {
-		WarmPoolClaimsTotal.Inc()
-		WarmPoolAvailable.WithLabelValues(req.Template).Dec()
-		// Reuse warm pod: remap the warm pod's info to our new sandbox ID
-		if info, ok := s.podMgr.GetPodInfo(warmID); ok {
-			s.podMgr.RemapPod(warmID, sbx.ID)
-			s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
-			s.sandboxMgr.SetStatus(sbx.ID, "running")
-			SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
-			log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
-			go s.warmPool.Replenish(context.Background(), req.Template)
+	if len(req.Capabilities) == 0 {
+		if warmID := s.warmPool.Claim(req.Template); warmID != "" {
+			WarmPoolClaimsTotal.Inc()
+			WarmPoolAvailable.WithLabelValues(req.Template).Dec()
+			if info, ok := s.podMgr.GetPodInfo(warmID); ok {
+				s.podMgr.RemapPod(warmID, sbx.ID)
+				s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
+				s.sandboxMgr.SetStatus(sbx.ID, "running")
+				SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
+				log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
+				go s.warmPool.Replenish(context.Background(), req.Template)
+				goto buildResponse
+			}
 		}
-	} else {
+	}
+	{
 		var rs *k8spkg.ResourceSpec
 		if req.Resources != nil {
 			rs = &k8spkg.ResourceSpec{CPU: req.Resources.CPU, Memory: req.Resources.Memory}
 		}
-		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI, rs); err != nil {
+		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI, req.Capabilities, rs); err != nil {
 			s.sandboxMgr.Remove(sbx.ID)
 			sandboxesActive.Dec()
 			SandboxesByTemplate.WithLabelValues(req.Template).Dec()
@@ -248,6 +279,7 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 		}
 		SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
 	}
+buildResponse:
 
 	// Build preview URLs
 	previewURLs := make(map[int]string)
@@ -403,14 +435,15 @@ func (s *Server) sandboxToResponse(sbx *sandbox.Sandbox) v1.SandboxResponse {
 	}
 
 	resp := v1.SandboxResponse{
-		ID:          sbx.ID,
-		Status:      sbx.Status,
-		Template:    sbx.Template,
-		WsURL:       fmt.Sprintf("%s/api/v1/sandboxes/%s/ws", s.cfg.ExternalURL, sbx.ID),
-		PreviewURLs: previewURLs,
-		CreatedAt:   sbx.CreatedAt,
-		ExpiresAt:   sbx.ExpiresAt,
-		Metadata:    sbx.Metadata,
+		ID:           sbx.ID,
+		Status:       sbx.Status,
+		Template:     sbx.Template,
+		WsURL:        fmt.Sprintf("%s/api/v1/sandboxes/%s/ws", s.cfg.ExternalURL, sbx.ID),
+		PreviewURLs:  previewURLs,
+		CreatedAt:    sbx.CreatedAt,
+		ExpiresAt:    sbx.ExpiresAt,
+		Metadata:     sbx.Metadata,
+		Capabilities: sbx.Capabilities,
 	}
 
 	if sbx.GUI {

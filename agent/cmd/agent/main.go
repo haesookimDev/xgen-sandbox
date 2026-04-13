@@ -101,7 +101,7 @@ func main() {
 		log.Printf("warning: sandbox recovery failed: %v", recoverErr)
 	} else if len(recovered) > 0 {
 		for _, rs := range recovered {
-			sandboxMgr.Recover(rs.SandboxID, rs.Template, rs.PodIP, nil, false, cfg.DefaultTimeout, rs.Ready)
+			sandboxMgr.Recover(rs.SandboxID, rs.Template, rs.PodIP, nil, false, cfg.DefaultTimeout, rs.Ready, nil)
 			if rs.Ready && rs.PodIP != "" {
 				rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
 				if err := wsProxy.ConnectToSidecar(rctx, rs.SandboxID, rs.PodIP); err != nil {

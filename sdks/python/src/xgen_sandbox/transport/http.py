@@ -21,6 +21,7 @@ def _parse_sandbox_info(data: dict) -> SandboxInfo:
         created_at=data.get("created_at", ""),
         expires_at=data.get("expires_at", ""),
         metadata=data.get("metadata"),
+        capabilities=data.get("capabilities"),
     )
 
 
@@ -79,6 +80,8 @@ class HttpTransport:
             body["gui"] = options.gui
         if options.metadata is not None:
             body["metadata"] = options.metadata
+        if options.capabilities is not None:
+            body["capabilities"] = options.capabilities
 
         resp = await self._client.post(
             f"{self._base_url}/api/v1/sandboxes",
