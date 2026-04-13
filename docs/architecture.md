@@ -93,18 +93,35 @@ Shared volume: `emptyDir` (1Gi limit) mounted at `/home/sandbox/workspace`
 | `runtime-go` | runtime-base | Go (latest) |
 | `runtime-gui` | runtime-base | Xvfb, x11vnc, fluxbox, xterm, noVNC, websockify |
 
+#### Capability Variants
+
+When the `sudo` or `browser` capability is requested, a variant image is used:
+
+| Image | Base | Additional Packages |
+|-------|------|---------------------|
+| `runtime-base-sudo` | runtime-base | sudo (passwordless for sandbox user) |
+| `runtime-nodejs-sudo` | runtime-nodejs | sudo |
+| `runtime-python-sudo` | runtime-python | sudo |
+| `runtime-go-sudo` | runtime-go | sudo |
+| `runtime-gui-browser` | runtime-gui | Chromium, fonts-liberation, libnss3, sudo |
+
+The `-sudo` variants add `SETUID`/`SETGID` Linux capabilities and `allowPrivilegeEscalation: true` to the runtime container security context. The `browser` capability uses `runtime-gui-browser` which includes Chromium and implies `gui: true`.
+
 ## Communication Flow
 
 ### Sandbox Creation
 
 ```
 1. Client ─── POST /api/v1/sandboxes ──▶ Agent
-2. Agent  ─── Check warm pool          ──▶ Claim or Create Pod
-3. Agent  ─── Watch pod status          ──▶ K8s API
-4. K8s    ─── Pod becomes Ready         ──▶ Agent (onReady callback)
-5. Agent  ─── Connect WS to sidecar    ──▶ Sidecar :9000
-6. Agent  ─── Return SandboxResponse   ──▶ Client
+2. Agent  ─── Validate capabilities     ──▶ Select image + security context
+3. Agent  ─── Check warm pool*          ──▶ Claim or Create Pod
+4. Agent  ─── Create per-pod NetworkPolicy (if git-ssh) ──▶ K8s API
+5. K8s    ─── Pod becomes Ready         ──▶ Agent (onReady callback)
+6. Agent  ─── Connect WS to sidecar    ──▶ Sidecar :9000
+7. Agent  ─── Return SandboxResponse   ──▶ Client
 ```
+
+\* Warm pool is only used for sandboxes without capabilities. Capability-enabled sandboxes always create a fresh pod.
 
 ### Command Execution (REST)
 

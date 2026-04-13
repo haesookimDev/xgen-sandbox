@@ -164,6 +164,7 @@ class XgenClient:
         ports: list[int] | None = None,
         gui: bool | None = None,
         metadata: dict[str, str] | None = None,
+        capabilities: list[str] | None = None,
     ) -> Sandbox
 
     async def get_sandbox(self, sandbox_id: str) -> Sandbox
@@ -458,6 +459,68 @@ import { SandboxFiles } from "@xgen-sandbox/browser";
 
 ## Common Patterns
 
+### Sandbox with Capabilities
+
+Capabilities extend the sandbox runtime with additional features like `sudo`, SSH git clone, and browser access.
+
+**TypeScript:**
+
+```typescript
+// Sandbox with sudo and SSH git clone
+const sandbox = await client.createSandbox({
+  template: "nodejs",
+  capabilities: ["sudo", "git-ssh"],
+});
+
+// Install system packages with sudo
+await sandbox.exec("sudo apt-get update && sudo apt-get install -y ffmpeg");
+
+// Clone a private repo via SSH
+await sandbox.exec("mkdir -p ~/.ssh && ssh-keyscan github.com >> ~/.ssh/known_hosts");
+await sandbox.exec("git clone git@github.com:user/repo.git");
+```
+
+**Python:**
+
+```python
+# Sandbox with browser capability (implies gui + sudo)
+sandbox = await client.create_sandbox(
+    template="python",
+    capabilities=["browser"],
+)
+
+# Chromium is pre-installed, VNC desktop is enabled
+await sandbox.exec("chromium-browser --headless --dump-dom https://example.com")
+print(sandbox.info.vnc_url)  # VNC URL for GUI access
+```
+
+**Go:**
+
+```go
+sandbox, err := client.CreateSandbox(ctx, xgen.CreateSandboxOptions{
+    Template:     "nodejs",
+    Capabilities: []string{"sudo", "git-ssh"},
+})
+```
+
+**Rust:**
+
+```rust
+let sandbox = client.create_sandbox(CreateSandboxOptions {
+    template: Some("nodejs".into()),
+    capabilities: Some(vec!["sudo".into(), "git-ssh".into()]),
+    ..Default::default()
+}).await?;
+```
+
+Available capabilities:
+
+| Capability | Effect |
+|------------|--------|
+| `sudo` | Enables passwordless `sudo` for the sandbox user |
+| `git-ssh` | Opens egress port 22 for SSH-based git operations |
+| `browser` | Installs Chromium, enables GUI desktop, implies `sudo` |
+
 ### GUI Sandbox with VNC
 
 ```typescript
@@ -627,6 +690,7 @@ match client.create_sandbox(opts).await {
 | File operations | WebSocket | WebSocket | WebSocket | WebSocket |
 | `watchFiles` | WebSocket | WebSocket | WebSocket | WebSocket |
 | `onPortOpen` | WebSocket | WebSocket | WebSocket | WebSocket |
+| `capabilities` | Yes | Yes | Yes | Yes |
 | `keepAlive` | REST | REST | REST | REST |
 | Auto-reconnect | Yes | Yes | Yes | No |
 | Browser support | Yes | — | — | — |

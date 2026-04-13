@@ -14,6 +14,8 @@
 | **Events** | | | | |
 | watchFiles() | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | onPortOpen() | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
+| **Capabilities** | | | | |
+| capabilities (sudo, git-ssh, browser) | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | **Lifecycle** | | | | |
 | keepAlive() | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
 | destroy() | :white_check_mark: | :white_check_mark: | :white_check_mark: | :white_check_mark: |
