@@ -16,6 +16,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
+	v2 "github.com/xgen-sandbox/agent/api/v2"
 	"github.com/xgen-sandbox/agent/internal/audit"
 	"github.com/xgen-sandbox/agent/internal/auth"
 	"github.com/xgen-sandbox/agent/internal/config"
@@ -147,14 +148,14 @@ func (s *Server) apiHandler() http.Handler {
 func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 	var req v1.AuthTokenRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeAPIError(w, r, v2.CodeInvalidRequest, "invalid request body", nil)
 		return
 	}
 
 	token, expiresAt, err := s.auth.GenerateToken(req.APIKey)
 	if err != nil {
 		AuthFailuresTotal.WithLabelValues("invalid_api_key").Inc()
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeAPIError(w, r, v2.CodeUnauthorized, err.Error(), nil)
 		return
 	}
 
@@ -170,7 +171,7 @@ func (s *Server) handleAuthToken(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	var req v1.CreateSandboxRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeAPIError(w, r, v2.CodeInvalidRequest, "invalid request body", nil)
 		return
 	}
 
@@ -182,11 +183,15 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	seen := make(map[int]bool)
 	for _, port := range req.Ports {
 		if port < 1 || port > 65535 {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid port: %d (must be 1-65535)", port))
+			writeAPIError(w, r, v2.CodeInvalidParameter,
+				fmt.Sprintf("invalid port: %d (must be 1-65535)", port),
+				map[string]any{"field": "ports", "value": port, "min": 1, "max": 65535})
 			return
 		}
 		if seen[port] {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("duplicate port: %d", port))
+			writeAPIError(w, r, v2.CodeInvalidParameter,
+				fmt.Sprintf("duplicate port: %d", port),
+				map[string]any{"field": "ports", "value": port, "reason": "duplicate"})
 			return
 		}
 		seen[port] = true
@@ -194,12 +199,16 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 
 	// Validate metadata size
 	if len(req.Metadata) > 20 {
-		writeError(w, http.StatusBadRequest, "too many metadata entries (max 20)")
+		writeAPIError(w, r, v2.CodeInvalidParameter,
+			"too many metadata entries (max 20)",
+			map[string]any{"field": "metadata", "max_entries": 20, "count": len(req.Metadata)})
 		return
 	}
 	for k, v := range req.Metadata {
 		if len(k) > 128 || len(v) > 1024 {
-			writeError(w, http.StatusBadRequest, "metadata key max 128 chars, value max 1024 chars")
+			writeAPIError(w, r, v2.CodeInvalidParameter,
+				"metadata key max 128 chars, value max 1024 chars",
+				map[string]any{"field": "metadata", "max_key_chars": 128, "max_value_chars": 1024})
 			return
 		}
 	}
@@ -209,7 +218,9 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	seen2 := make(map[string]bool)
 	for _, c := range req.Capabilities {
 		if !validCaps[c] {
-			writeError(w, http.StatusBadRequest, fmt.Sprintf("unknown capability: %q (valid: sudo, git-ssh, browser)", c))
+			writeAPIError(w, r, v2.CodeInvalidParameter,
+				fmt.Sprintf("unknown capability: %q", c),
+				map[string]any{"field": "capabilities", "value": c, "allowed": []string{"sudo", "git-ssh", "browser"}})
 			return
 		}
 		seen2[c] = true
@@ -274,7 +285,8 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 			SandboxesByTemplate.WithLabelValues(req.Template).Dec()
 			SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Dec()
 			log.Printf("create pod error: %v", err)
-			writeError(w, http.StatusInternalServerError, "failed to create sandbox")
+			writeAPIError(w, r, v2.CodePodCreateFailed, "failed to create sandbox",
+				map[string]any{"reason": err.Error(), "template": req.Template})
 			return
 		}
 		SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
@@ -319,7 +331,8 @@ func (s *Server) handleGetSandbox(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sbx, err := s.sandboxMgr.Get(id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "sandbox not found")
+		writeAPIError(w, r, v2.CodeSandboxNotFound, "sandbox not found",
+			map[string]any{"sandbox_id": id})
 		return
 	}
 	writeJSON(w, http.StatusOK, s.sandboxToResponse(sbx))
@@ -331,7 +344,8 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 	if err := s.podMgr.DeletePod(r.Context(), id); err != nil {
 		if !apierrors.IsNotFound(err) {
 			log.Printf("delete pod error: %v", err)
-			writeError(w, http.StatusInternalServerError, "failed to delete sandbox pod")
+			writeAPIError(w, r, v2.CodeInternal, "failed to delete sandbox pod",
+				map[string]any{"sandbox_id": id, "reason": err.Error()})
 			return
 		}
 		// Pod already gone — proceed with cleanup.
@@ -355,7 +369,8 @@ func (s *Server) handleDeleteSandbox(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleKeepalive(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if err := s.sandboxMgr.ExtendTimeout(id, s.cfg.DefaultTimeout); err != nil {
-		writeError(w, http.StatusNotFound, "sandbox not found")
+		writeAPIError(w, r, v2.CodeSandboxNotFound, "sandbox not found",
+			map[string]any{"sandbox_id": id})
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -366,18 +381,20 @@ func (s *Server) handleKeepalive(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	if _, err := s.sandboxMgr.Get(id); err != nil {
-		writeError(w, http.StatusNotFound, "sandbox not found")
+		writeAPIError(w, r, v2.CodeSandboxNotFound, "sandbox not found",
+			map[string]any{"sandbox_id": id})
 		return
 	}
 
 	var req v1.ExecRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
+		writeAPIError(w, r, v2.CodeInvalidRequest, "invalid request body", nil)
 		return
 	}
 
 	if req.Command == "" {
-		writeError(w, http.StatusBadRequest, "command is required")
+		writeAPIError(w, r, v2.CodeInvalidParameter, "command is required",
+			map[string]any{"field": "command"})
 		return
 	}
 
@@ -388,7 +405,16 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 
 	result, err := s.wsProxy.ExecSync(r.Context(), id, req.Command, req.Args, req.Env, req.Cwd, timeout)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, err.Error())
+		code := v2.CodeInternal
+		msg := err.Error()
+		low := strings.ToLower(msg)
+		switch {
+		case strings.Contains(low, "timeout"), strings.Contains(low, "deadline"):
+			code = v2.CodeExecTimeout
+		case strings.Contains(low, "ws connect"), strings.Contains(low, "sidecar"), strings.Contains(low, "connection"):
+			code = v2.CodeSidecarUnreachable
+		}
+		writeAPIError(w, r, code, msg, map[string]any{"sandbox_id": id})
 		return
 	}
 
@@ -412,7 +438,8 @@ func (s *Server) handleListServices(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	sbx, err := s.sandboxMgr.Get(id)
 	if err != nil {
-		writeError(w, http.StatusNotFound, "sandbox not found")
+		writeAPIError(w, r, v2.CodeSandboxNotFound, "sandbox not found",
+			map[string]any{"sandbox_id": id})
 		return
 	}
 
@@ -458,8 +485,4 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(v)
-}
-
-func writeError(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, v1.ErrorResponse{Error: message})
 }
