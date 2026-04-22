@@ -40,6 +40,14 @@ async function testSudo() {
     const whoami = await sandbox.exec("whoami");
     console.log(`whoami (no sudo): ${whoami.stdout.trim()}  (expect: sandbox)`);
 
+    // Diagnostics for the setuid-on-exec path that sudo depends on.
+    const diag = await sandbox.exec(
+      "printf 'nnp='; grep -s NoNewPrivs /proc/self/status | awk '{print $2}'; " +
+        "printf 'root_mount_opts='; awk '$5==\"/\"{print $6}' /proc/self/mountinfo | head -1; " +
+        "printf 'sudo_perm='; stat -c '%a %U:%G' /usr/bin/sudo"
+    );
+    console.log(diag.stdout.trim());
+
     const sudoWhoami = await sandbox.exec("sudo -n whoami");
     console.log(
       `sudo -n whoami: stdout=${sudoWhoami.stdout.trim()} stderr=${sudoWhoami.stderr.trim()} exit=${sudoWhoami.exitCode}`

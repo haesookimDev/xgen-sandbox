@@ -285,6 +285,10 @@ func (pm *PodManager) CreatePod(
 			SecurityContext: &corev1.SecurityContext{
 				RunAsUser:              &rootUser,
 				ReadOnlyRootFilesystem: boolPtr(true),
+				// Must be true so the kernel does not set no_new_privs on sidecar
+				// processes; otherwise setuid-bit binaries (sudo) inside the
+				// chrooted runtime rootfs silently fail to escalate.
+				AllowPrivilegeEscalation: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
 					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN", "SETUID", "SETGID"},
