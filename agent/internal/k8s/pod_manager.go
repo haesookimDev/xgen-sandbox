@@ -184,7 +184,23 @@ func capSet(capabilities []string) map[string]bool {
 }
 
 // CreatePod creates a new sandbox pod.
-func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool, capabilities []string, resources ...*ResourceSpec) error {
+//
+// metadata, createdAt, expiresAt are persisted as xgen.io/* annotations so
+// the agent can recover full sandbox state after a restart (see
+// RecoverExistingPods). Pass nil / time.Time{} when no persistence is
+// needed — e.g. warm-pool pre-warms, which become real sandboxes only
+// when claimed.
+func (pm *PodManager) CreatePod(
+	ctx context.Context,
+	sandboxID, template string,
+	env map[string]string,
+	ports []int,
+	gui bool,
+	capabilities []string,
+	metadata map[string]string,
+	createdAt, expiresAt time.Time,
+	resources ...*ResourceSpec,
+) error {
 	caps := capSet(capabilities)
 	runtimeImage := pm.runtimeImageForTemplate(template, caps)
 
@@ -313,12 +329,28 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		labels["xgen.io/cap-"+c] = "true"
 	}
 
+	// Persist sandbox state as annotations so it survives agent restarts.
+	// Warm-pool pre-warms pass zero values; nothing is written then.
+	annotations, err := SandboxAnnotations{
+		Metadata:     metadata,
+		Env:          env,
+		Ports:        ports,
+		GUI:          gui,
+		Capabilities: capabilities,
+		CreatedAt:    createdAt,
+		ExpiresAt:    expiresAt,
+	}.Encode()
+	if err != nil {
+		return fmt.Errorf("encode sandbox annotations: %w", err)
+	}
+
 	shareProcessNamespace := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sbx-" + sandboxID,
-			Namespace: pm.namespace,
-			Labels:    labels,
+			Name:        "sbx-" + sandboxID,
+			Namespace:   pm.namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
 			ShareProcessNamespace:        &shareProcessNamespace,
@@ -344,8 +376,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		},
 	}
 
-	_, err := pm.client.CoreV1().Pods(pm.namespace).Create(ctx, pod, metav1.CreateOptions{})
-	if err != nil {
+	if _, err := pm.client.CoreV1().Pods(pm.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create pod: %w", err)
 	}
 
@@ -484,15 +515,33 @@ func (pm *PodManager) RemapPod(oldID, newID string) {
 }
 
 // RecoveredSandbox holds state recovered from an existing K8s pod.
+//
+// Identity (SandboxID, Template, PodIP, Ready) comes from labels + status;
+// the rest (ports, gui, env, metadata, capabilities, expiry) is restored
+// from the xgen.io/* annotations written at CreatePod time. Fields may be
+// zero when the pod predates the annotation scheme — callers should fall
+// back to sensible defaults in that case.
 type RecoveredSandbox struct {
-	SandboxID string
-	Template  string
-	PodIP     string
-	Ready     bool
+	SandboxID    string
+	Template     string
+	PodIP        string
+	Ready        bool
+	Metadata     map[string]string
+	Env          map[string]string
+	Ports        []int
+	GUI          bool
+	Capabilities []string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
 }
 
 // RecoverExistingPods scans K8s for sandbox pods that survived an agent restart
 // and returns their state so the sandbox manager can re-register them.
+//
+// The function reads annotations via DecodeAnnotations, which is tolerant:
+// malformed individual fields degrade to zero values instead of skipping
+// the whole pod. Warm-pool pods (sandbox-id prefix "warm-") are skipped so
+// they stay owned by the warm-pool subsystem.
 func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandbox, error) {
 	pods, err := pm.client.CoreV1().Pods(pm.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=xgen-sandbox",
@@ -521,11 +570,30 @@ func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandb
 			Ready:     ready,
 		}
 
+		ann := DecodeAnnotations(pod.Annotations)
+		// Capabilities fall back to label markers for pods created before
+		// the annotation scheme (labels have always been written).
+		capabilities := ann.Capabilities
+		if len(capabilities) == 0 {
+			for key := range pod.Labels {
+				if strings.HasPrefix(key, "xgen.io/cap-") {
+					capabilities = append(capabilities, strings.TrimPrefix(key, "xgen.io/cap-"))
+				}
+			}
+		}
+
 		recovered = append(recovered, RecoveredSandbox{
-			SandboxID: sandboxID,
-			Template:  template,
-			PodIP:     pod.Status.PodIP,
-			Ready:     ready,
+			SandboxID:    sandboxID,
+			Template:     template,
+			PodIP:        pod.Status.PodIP,
+			Ready:        ready,
+			Metadata:     ann.Metadata,
+			Env:          ann.Env,
+			Ports:        ann.Ports,
+			GUI:          ann.GUI,
+			Capabilities: capabilities,
+			CreatedAt:    ann.CreatedAt,
+			ExpiresAt:    ann.ExpiresAt,
 		})
 	}
 

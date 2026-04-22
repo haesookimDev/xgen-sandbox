@@ -137,10 +137,34 @@ func (m *Manager) GetExpired() []string {
 }
 
 // Recover re-registers a sandbox that was found in K8s after an agent restart.
-func (m *Manager) Recover(id, template, podIP string, ports []int, gui bool, timeout time.Duration, ready bool, capabilities []string) {
+//
+// The caller is responsible for reading state from pod annotations and
+// passing it in; this method is storage-only and does not consult K8s.
+// A zero createdAt or expiresAt signals "unknown" — caller should have
+// substituted a fallback (e.g. now + DefaultTimeout) before invocation,
+// because Manager does not hold config.
+func (m *Manager) Recover(
+	id, template, podIP string,
+	ports []int,
+	gui bool,
+	env, metadata map[string]string,
+	capabilities []string,
+	createdAt, expiresAt time.Time,
+	ready bool,
+) {
 	status := v1.StatusStarting
 	if ready {
 		status = v1.StatusRunning
+	}
+
+	now := time.Now()
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if expiresAt.IsZero() {
+		// Caller failed to provide one — give the sandbox a short grace
+		// period so it does not get reaped immediately.
+		expiresAt = now.Add(time.Hour)
 	}
 
 	sbx := &Sandbox{
@@ -149,10 +173,12 @@ func (m *Manager) Recover(id, template, podIP string, ports []int, gui bool, tim
 		Template:     template,
 		Ports:        ports,
 		GUI:          gui,
+		Env:          env,
+		Metadata:     metadata,
 		PodIP:        podIP,
 		Capabilities: capabilities,
-		CreatedAt:    time.Now(),
-		ExpiresAt:    time.Now().Add(timeout),
+		CreatedAt:    createdAt,
+		ExpiresAt:    expiresAt,
 	}
 
 	m.mu.Lock()

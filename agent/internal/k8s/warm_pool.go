@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -124,7 +125,9 @@ func (wp *WarmPool) fill(ctx context.Context, template string) {
 
 	for i := 0; i < needed; i++ {
 		id := fmt.Sprintf("warm-%s", uuid.New().String()[:8])
-		if err := wp.podMgr.CreatePod(ctx, id, template, nil, nil, false, nil); err != nil {
+		// Warm pre-warms carry no persistent state — they take on metadata
+		// and expiry only when claimed (see handleCreateSandbox).
+		if err := wp.podMgr.CreatePod(ctx, id, template, nil, nil, false, nil, nil, time.Time{}, time.Time{}); err != nil {
 			log.Printf("warm pool: failed to create pod for %s: %v", template, err)
 			return
 		}

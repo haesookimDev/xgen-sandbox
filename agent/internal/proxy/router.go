@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/xgen-sandbox/agent/internal/sandbox"
@@ -101,6 +102,11 @@ func (r *Router) PreviewURL(sandboxID string, port int) string {
 }
 
 // parseSubdomain extracts sandbox ID and port from "sbx-{id}-{port}".
+//
+// The port is validated: it must be decimal and within 1-65535. Previously
+// a malformed subdomain like "sbx-abc-foo" returned port="foo" and then
+// failed much later at TCP dial time with an opaque error. Validating
+// up-front lets the preview router emit a clean 400 instead.
 func parseSubdomain(subdomain string) (sandboxID string, port string, err error) {
 	if !strings.HasPrefix(subdomain, "sbx-") {
 		return "", "", fmt.Errorf("invalid subdomain format: %s", subdomain)
@@ -115,6 +121,16 @@ func parseSubdomain(subdomain string) (sandboxID string, port string, err error)
 
 	sandboxID = rest[:lastDash]
 	port = rest[lastDash+1:]
+	if sandboxID == "" {
+		return "", "", fmt.Errorf("invalid subdomain format: %s (missing sandbox id)", subdomain)
+	}
+	n, err := strconv.Atoi(port)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid subdomain format: %s (port %q not numeric)", subdomain, port)
+	}
+	if n < 1 || n > 65535 {
+		return "", "", fmt.Errorf("invalid subdomain format: %s (port %d out of range 1-65535)", subdomain, n)
+	}
 	return sandboxID, port, nil
 }
 

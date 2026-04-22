@@ -101,7 +101,20 @@ func main() {
 		log.Printf("warning: sandbox recovery failed: %v", recoverErr)
 	} else if len(recovered) > 0 {
 		for _, rs := range recovered {
-			sandboxMgr.Recover(rs.SandboxID, rs.Template, rs.PodIP, nil, false, cfg.DefaultTimeout, rs.Ready, nil)
+			// expiresAt falls back to now + DefaultTimeout only when the
+			// pod predates the annotation scheme (or the annotation was
+			// malformed). With annotations present the original expiry is
+			// honored across restarts.
+			expiresAt := rs.ExpiresAt
+			if expiresAt.IsZero() {
+				expiresAt = time.Now().Add(cfg.DefaultTimeout)
+			}
+			sandboxMgr.Recover(
+				rs.SandboxID, rs.Template, rs.PodIP,
+				rs.Ports, rs.GUI, rs.Env, rs.Metadata,
+				rs.Capabilities, rs.CreatedAt, expiresAt,
+				rs.Ready,
+			)
 			if rs.Ready && rs.PodIP != "" {
 				rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
 				if err := wsProxy.ConnectToSidecar(rctx, rs.SandboxID, rs.PodIP); err != nil {

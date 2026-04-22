@@ -1,12 +1,69 @@
 package sandbox
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
 
 	v1 "github.com/xgen-sandbox/agent/api/v1"
 )
+
+func TestManager_Recover_PreservesFields(t *testing.T) {
+	m := NewManager()
+	createdAt := time.Now().Add(-10 * time.Minute).Truncate(time.Millisecond)
+	expiresAt := time.Now().Add(50 * time.Minute).Truncate(time.Millisecond)
+
+	m.Recover("rec-1", "python", "10.0.0.1",
+		[]int{3000, 8080}, true,
+		map[string]string{"FOO": "bar"},
+		map[string]string{"owner": "alice"},
+		[]string{"sudo"},
+		createdAt, expiresAt,
+		true,
+	)
+
+	got, err := m.Get("rec-1")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if got.Status != v1.StatusRunning {
+		t.Errorf("status: expected running, got %q", got.Status)
+	}
+	if !reflect.DeepEqual(got.Ports, []int{3000, 8080}) {
+		t.Errorf("ports: got %v", got.Ports)
+	}
+	if got.Env["FOO"] != "bar" {
+		t.Errorf("env: got %v", got.Env)
+	}
+	if got.Metadata["owner"] != "alice" {
+		t.Errorf("metadata: got %v", got.Metadata)
+	}
+	if !reflect.DeepEqual(got.Capabilities, []string{"sudo"}) {
+		t.Errorf("capabilities: got %v", got.Capabilities)
+	}
+	if !got.CreatedAt.Equal(createdAt) {
+		t.Errorf("createdAt: got %v want %v", got.CreatedAt, createdAt)
+	}
+	if !got.ExpiresAt.Equal(expiresAt) {
+		t.Errorf("expiresAt: got %v want %v", got.ExpiresAt, expiresAt)
+	}
+}
+
+func TestManager_Recover_ZeroTimesFallBack(t *testing.T) {
+	m := NewManager()
+	before := time.Now()
+	m.Recover("rec-2", "base", "10.0.0.2", nil, false, nil, nil, nil,
+		time.Time{}, time.Time{}, false)
+	got, _ := m.Get("rec-2")
+
+	if got.CreatedAt.Before(before) {
+		t.Errorf("createdAt fallback should be >= call time, got %v", got.CreatedAt)
+	}
+	if got.ExpiresAt.Before(before) {
+		t.Errorf("expiresAt fallback should be future, got %v", got.ExpiresAt)
+	}
+}
 
 func TestManager_CreateAndGet(t *testing.T) {
 	m := NewManager()

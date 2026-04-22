@@ -305,14 +305,15 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := v1.SandboxResponse{
-		ID:          sbx.ID,
-		Status:      sbx.Status,
-		Template:    sbx.Template,
-		WsURL:       fmt.Sprintf("%s/api/v1/sandboxes/%s/ws", s.cfg.ExternalURL, sbx.ID),
-		PreviewURLs: previewURLs,
-		CreatedAt:   sbx.CreatedAt,
-		ExpiresAt:   sbx.ExpiresAt,
-		Metadata:    sbx.Metadata,
+		ID:           sbx.ID,
+		Status:       sbx.Status,
+		Template:     sbx.Template,
+		WsURL:        fmt.Sprintf("%s/api/v1/sandboxes/%s/ws", s.cfg.ExternalURL, sbx.ID),
+		PreviewURLs:  previewURLs,
+		CreatedAt:    sbx.CreatedAt,
+		ExpiresAt:    sbx.ExpiresAt,
+		Metadata:     sbx.Metadata,
+		Capabilities: sbx.Capabilities,
 	}
 
 	if req.GUI {
@@ -356,7 +357,7 @@ func (s *Server) provisionSandboxPod(
 		}
 	}
 
-	if err := s.podMgr.CreatePod(ctx, sbx.ID, template, env, ports, gui, capabilities, resources); err != nil {
+	if err := s.podMgr.CreatePod(ctx, sbx.ID, template, env, ports, gui, capabilities, sbx.Metadata, sbx.CreatedAt, sbx.ExpiresAt, resources); err != nil {
 		s.sandboxMgr.Remove(sbx.ID)
 		sandboxesActive.Dec()
 		SandboxesByTemplate.WithLabelValues(template).Dec()

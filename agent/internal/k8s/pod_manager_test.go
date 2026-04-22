@@ -3,6 +3,7 @@ package k8s
 import (
 	"context"
 	"testing"
+	"time"
 
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -25,7 +26,7 @@ func TestCreatePod_BasicSpec(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "test-id", "nodejs", nil, []int{3000}, false, nil); err != nil {
+	if err := pm.CreatePod(ctx, "test-id", "nodejs", nil, []int{3000}, false, nil, nil, time.Time{}, time.Time{}); err != nil {
 		t.Fatalf("CreatePod() error: %v", err)
 	}
 
@@ -64,7 +65,7 @@ func TestCreatePod_WithGUI(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "gui-id", "gui", nil, nil, true, nil); err != nil {
+	if err := pm.CreatePod(ctx, "gui-id", "gui", nil, nil, true, nil, nil, time.Time{}, time.Time{}); err != nil {
 		t.Fatalf("CreatePod(gui=true) error: %v", err)
 	}
 
@@ -116,7 +117,7 @@ func TestDeletePod(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	pm.CreatePod(ctx, "del-id", "base", nil, nil, false, nil)
+	pm.CreatePod(ctx, "del-id", "base", nil, nil, false, nil, nil, time.Time{}, time.Time{})
 
 	// Manually add to cache (normally done by watcher)
 	pm.mu.Lock()
@@ -251,7 +252,7 @@ func TestCreatePod_WithSudoCapability(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "sudo-id", "nodejs", nil, nil, false, []string{"sudo"}); err != nil {
+	if err := pm.CreatePod(ctx, "sudo-id", "nodejs", nil, nil, false, []string{"sudo"}, nil, time.Time{}, time.Time{}); err != nil {
 		t.Fatalf("CreatePod(sudo) error: %v", err)
 	}
 
@@ -284,7 +285,7 @@ func TestCreatePod_WithGitSSHCapability(t *testing.T) {
 	pm := newTestPodManager()
 	ctx := context.Background()
 
-	if err := pm.CreatePod(ctx, "ssh-id", "base", nil, nil, false, []string{"git-ssh"}); err != nil {
+	if err := pm.CreatePod(ctx, "ssh-id", "base", nil, nil, false, []string{"git-ssh"}, nil, time.Time{}, time.Time{}); err != nil {
 		t.Fatalf("CreatePod(git-ssh) error: %v", err)
 	}
 
@@ -306,7 +307,7 @@ func TestCreatePod_EnvVars(t *testing.T) {
 	ctx := context.Background()
 
 	env := map[string]string{"FOO": "bar", "BAZ": "qux"}
-	if err := pm.CreatePod(ctx, "env-id", "base", env, nil, false, nil); err != nil {
+	if err := pm.CreatePod(ctx, "env-id", "base", env, nil, false, nil, nil, time.Time{}, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 

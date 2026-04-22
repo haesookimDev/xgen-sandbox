@@ -45,6 +45,27 @@ func TestParseSubdomain_NoDash(t *testing.T) {
 	}
 }
 
+func TestParseSubdomain_NonNumericPort(t *testing.T) {
+	// Regression: previously accepted and failed later at dial time.
+	if _, _, err := parseSubdomain("sbx-abc123-foo"); err == nil {
+		t.Error("expected error for non-numeric port")
+	}
+}
+
+func TestParseSubdomain_OutOfRangePort(t *testing.T) {
+	for _, port := range []string{"0", "65536", "99999"} {
+		if _, _, err := parseSubdomain("sbx-abc-" + port); err == nil {
+			t.Errorf("expected error for port %s", port)
+		}
+	}
+}
+
+func TestParseSubdomain_EmptySandboxID(t *testing.T) {
+	if _, _, err := parseSubdomain("sbx--3000"); err == nil {
+		t.Error("expected error for empty sandbox id")
+	}
+}
+
 func TestNewRouter_StripsDomainPort(t *testing.T) {
 	r := NewRouter("preview.localhost:8080", nil)
 	if r.DomainHost() != "preview.localhost" {
