@@ -54,6 +54,11 @@ func NewManager() *Manager {
 	}
 }
 
+// shellSingleQuote wraps s in POSIX single-quotes, escaping embedded quotes.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // findRuntimePID finds the PID of the runtime container's init process ("sleep infinity").
 func findRuntimePID() (string, error) {
 	entries, err := os.ReadDir("/proc")
@@ -98,17 +103,18 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 
 	// nsenter drops to UID/GID 1000 after entering the runtime's namespaces.
 	// Requires CAP_SETUID/CAP_SETGID on the sidecar container.
-	// NOTE: --wd takes an *optional* arg, so it must be joined with "=";
-	// passing it as two tokens makes nsenter treat the next token as the
-	// command to exec.
+	//
+	// We cd via a small sh wrapper instead of nsenter's --wd because --wd
+	// leaves the cwd dentry in a state where dash's startup getcwd() fails
+	// with ENOENT, which pollutes stderr for every exec.
+	cdScript := fmt.Sprintf("cd %s && exec \"$0\" \"$@\"", shellSingleQuote(cwd))
 	nsenterArgs := []string{
 		"--target", runtimePID,
 		"--mount", "--uts", "--ipc", "--pid", "--cgroup",
 		"--setuid", "1000",
 		"--setgid", "1000",
-		"--wd=" + cwd,
 		"--",
-		opts.Command,
+		"sh", "-c", cdScript, opts.Command,
 	}
 	nsenterArgs = append(nsenterArgs, opts.Args...)
 	cmd := exec.Command("nsenter", nsenterArgs...)

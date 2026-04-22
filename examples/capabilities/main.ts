@@ -56,16 +56,12 @@ async function testSudo() {
       throw new Error("sudo capability did not grant root");
     }
 
-    // Install a package as proof that sudo is usable for real work.
-    console.log("sudo apt-get install -y cowsay ...");
-    const install = await sandbox.exec(
-      "sudo apt-get update -qq && sudo apt-get install -y -qq cowsay",
-      { timeout: 120_000 }
-    );
-    console.log(`install exit=${install.exitCode}`);
-
-    const cow = await sandbox.exec("/usr/games/cowsay 'sudo works'");
-    console.log(cow.stdout);
+    // Prove sudo can actually write to a root-owned path.
+    const touch = await sandbox.exec("sudo touch /root/sudo-worked && sudo ls -l /root/sudo-worked");
+    console.log(`sudo file write: exit=${touch.exitCode} ${touch.stdout.trim()}`);
+    if (touch.exitCode !== 0) {
+      throw new Error("sudo could not write to /root");
+    }
 
     console.log("sudo capability: OK");
   } finally {
@@ -84,16 +80,25 @@ async function testGitSsh() {
   console.log(`capabilities: ${JSON.stringify(sandbox.info.capabilities)}`);
 
   try {
-    // Without git-ssh, a plain sandbox has no egress on port 22.
-    // With git-ssh, ssh-keyscan should succeed against github.com.
-    console.log("ssh-keyscan -T 10 github.com ...");
-    const keyscan = await sandbox.exec(
-      "ssh-keyscan -T 10 github.com | head -1",
+    // Without git-ssh, the default sandbox NetworkPolicy blocks port 22
+    // egress. With git-ssh, a per-pod NetworkPolicy opens it. We test this
+    // with bash's /dev/tcp — no openssh-client needed in the runtime image,
+    // and github.com:22 sends an SSH banner the moment the TCP connection
+    // is accepted.
+    //
+    // NB: kindnet (the default CNI on `kind`) does NOT enforce
+    // NetworkPolicies, so on a kind cluster this test passes even without
+    // the git-ssh capability. On clusters with Calico/Cilium it's a real
+    // test.
+    console.log("bash /dev/tcp github.com:22 ...");
+    const tcp = await sandbox.exec(
+      `bash -c 'exec 3<>/dev/tcp/github.com/22 && IFS= read -r -t 10 line <&3 && printf %s "$line"'`,
       { timeout: 30_000 }
     );
-    console.log(`exit=${keyscan.exitCode}`);
-    console.log(`stdout: ${keyscan.stdout.trim()}`);
-    if (keyscan.exitCode !== 0 || !keyscan.stdout.includes("github.com")) {
+    console.log(`exit=${tcp.exitCode}`);
+    console.log(`banner: ${tcp.stdout.trim() || "(empty)"}`);
+    console.log(`stderr: ${tcp.stderr.trim() || "(empty)"}`);
+    if (tcp.exitCode !== 0 || !tcp.stdout.startsWith("SSH-")) {
       throw new Error("git-ssh egress on port 22 did not work");
     }
 

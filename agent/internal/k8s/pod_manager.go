@@ -291,7 +291,7 @@ func (pm *PodManager) CreatePod(
 				AllowPrivilegeEscalation: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
-					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN", "SETUID", "SETGID"},
+					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN", "SETUID", "SETGID", "AUDIT_WRITE"},
 				},
 			},
 			ReadinessProbe: &corev1.Probe{
