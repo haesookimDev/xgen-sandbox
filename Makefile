@@ -27,6 +27,7 @@ build-images: ## Build all Docker images
 	docker build -t ghcr.io/xgen-sandbox/runtime-nodejs:latest ./runtime/nodejs
 	docker build -t ghcr.io/xgen-sandbox/runtime-python:latest ./runtime/python
 	docker build -t ghcr.io/xgen-sandbox/runtime-gui:latest ./runtime/gui
+	docker build -t ghcr.io/xgen-sandbox/runtime-go:latest ./runtime/go
 	docker build -t ghcr.io/xgen-sandbox/runtime-base-sudo:latest ./runtime/base-sudo
 	docker build -t ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest ./runtime/nodejs-sudo
 	docker build -t ghcr.io/xgen-sandbox/runtime-python-sudo:latest ./runtime/python-sudo
@@ -50,6 +51,7 @@ dev-cluster: ## Create Kind cluster and load images
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-nodejs:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-python:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-gui:latest --name xgen-sandbox
+	kind load docker-image ghcr.io/xgen-sandbox/runtime-go:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-base-sudo:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-python-sudo:latest --name xgen-sandbox
@@ -79,6 +81,7 @@ dev-reload: build-images ## Rebuild images and restart agent in Kind
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-nodejs:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-python:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-gui:latest --name xgen-sandbox
+	kind load docker-image ghcr.io/xgen-sandbox/runtime-go:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-base-sudo:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest --name xgen-sandbox
 	kind load docker-image ghcr.io/xgen-sandbox/runtime-python-sudo:latest --name xgen-sandbox
