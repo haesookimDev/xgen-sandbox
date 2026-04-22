@@ -104,8 +104,9 @@ func (s *Server) apiHandler() http.Handler {
 	})
 	r.Handle("/metrics", promhttp.Handler())
 
-	// Auth endpoint (no auth required)
-	r.Post("/api/v1/auth/token", s.handleAuthToken)
+	// Auth endpoint (no auth required). v1 carries the deprecation
+	// middleware so even unauthenticated callers see the Sunset header.
+	r.With(deprecationMiddleware).Post("/api/v1/auth/token", s.handleAuthToken)
 	r.Post("/api/v2/auth/token", s.handleAuthTokenV2)
 
 	// Protected API routes
@@ -114,23 +115,35 @@ func (s *Server) apiHandler() http.Handler {
 		r.Use(s.auth.Middleware)
 		r.Use(auditLog(s.logger, s.auditStore))
 
-		// --- v1 (kept for backwards compatibility, pending deprecation) ---
-		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
-			Post("/api/v1/sandboxes", s.handleCreateSandbox)
-		r.With(auth.RequirePermission(auth.PermSandboxRead)).
-			Get("/api/v1/sandboxes", s.handleListSandboxes)
-		r.With(auth.RequirePermission(auth.PermSandboxRead)).
-			Get("/api/v1/sandboxes/{id}", s.handleGetSandbox)
-		r.With(auth.RequirePermission(auth.PermSandboxDelete)).
-			Delete("/api/v1/sandboxes/{id}", s.handleDeleteSandbox)
-		r.With(auth.RequirePermission(auth.PermSandboxWrite)).
-			Post("/api/v1/sandboxes/{id}/keepalive", s.handleKeepalive)
-		r.With(auth.RequirePermission(auth.PermSandboxExec)).
-			Post("/api/v1/sandboxes/{id}/exec", s.handleExec)
-		r.With(auth.RequirePermission(auth.PermSandboxExec)).
-			Get("/api/v1/sandboxes/{id}/ws", s.handleWS)
-		r.With(auth.RequirePermission(auth.PermSandboxRead)).
-			Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
+		// --- v1 (deprecated; responses carry Sunset headers) ---
+		r.Group(func(r chi.Router) {
+			r.Use(deprecationMiddleware)
+
+			r.With(auth.RequirePermission(auth.PermSandboxCreate)).
+				Post("/api/v1/sandboxes", s.handleCreateSandbox)
+			r.With(auth.RequirePermission(auth.PermSandboxRead)).
+				Get("/api/v1/sandboxes", s.handleListSandboxes)
+			r.With(auth.RequirePermission(auth.PermSandboxRead)).
+				Get("/api/v1/sandboxes/{id}", s.handleGetSandbox)
+			r.With(auth.RequirePermission(auth.PermSandboxDelete)).
+				Delete("/api/v1/sandboxes/{id}", s.handleDeleteSandbox)
+			r.With(auth.RequirePermission(auth.PermSandboxWrite)).
+				Post("/api/v1/sandboxes/{id}/keepalive", s.handleKeepalive)
+			r.With(auth.RequirePermission(auth.PermSandboxExec)).
+				Post("/api/v1/sandboxes/{id}/exec", s.handleExec)
+			r.With(auth.RequirePermission(auth.PermSandboxExec)).
+				Get("/api/v1/sandboxes/{id}/ws", s.handleWS)
+			r.With(auth.RequirePermission(auth.PermSandboxRead)).
+				Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
+
+			r.Route("/api/v1/admin", func(r chi.Router) {
+				r.Use(auth.RequireRole(auth.RoleAdmin))
+				r.Get("/summary", s.handleAdminSummary)
+				r.Get("/metrics", s.handleAdminMetrics)
+				r.Get("/audit-logs", s.handleAdminAuditLogs)
+				r.Get("/warm-pool", s.handleAdminWarmPool)
+			})
+		})
 
 		// --- v2 (preferred) ---
 		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
@@ -150,16 +163,6 @@ func (s *Server) apiHandler() http.Handler {
 		r.With(auth.RequirePermission(auth.PermSandboxRead)).
 			Get("/api/v2/sandboxes/{id}/services", s.handleListServicesV2)
 
-		// Admin-only routes (v1 + v2 share the same handlers — admin
-		// shape is unchanged for MVP; structured errors come via
-		// writeAPIError anyway).
-		r.Route("/api/v1/admin", func(r chi.Router) {
-			r.Use(auth.RequireRole(auth.RoleAdmin))
-			r.Get("/summary", s.handleAdminSummary)
-			r.Get("/metrics", s.handleAdminMetrics)
-			r.Get("/audit-logs", s.handleAdminAuditLogs)
-			r.Get("/warm-pool", s.handleAdminWarmPool)
-		})
 		r.Route("/api/v2/admin", func(r chi.Router) {
 			r.Use(auth.RequireRole(auth.RoleAdmin))
 			r.Get("/summary", s.handleAdminSummary)

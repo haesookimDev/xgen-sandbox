@@ -77,6 +77,15 @@ var (
 		Help:      "Number of active WebSocket connections.",
 	})
 
+	// API v1 deprecation tracking. Label is the chi route pattern so
+	// cardinality stays bounded (no sandbox IDs, etc.). Used to verify
+	// traffic has migrated to v2 before we remove v1.
+	apiV1RequestsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "xgen",
+		Name:      "api_v1_requests_total",
+		Help:      "Total requests to the deprecated v1 API, labelled by route pattern.",
+	}, []string{"route"})
+
 	// Auth metrics
 	AuthTokenGeneratedTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Namespace: "xgen",
