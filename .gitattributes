@@ -1,2 +1,8 @@
 # Exclude CI/CD workflows from git archive (GitHub "Download ZIP")
 .github/ export-ignore
+
+# Force LF on shell scripts and Dockerfiles — these run on Linux and a
+# CRLF checkout breaks #!/bin/bash exec on Windows developer machines.
+*.sh text eol=lf
+Dockerfile text eol=lf
+Makefile text eol=lf

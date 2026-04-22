@@ -1,6 +1,7 @@
 package sandbox
 
 import (
+	"reflect"
 	"sync"
 	"testing"
 	"time"
@@ -8,9 +9,65 @@ import (
 	v1 "github.com/xgen-sandbox/agent/api/v1"
 )
 
+func TestManager_Recover_PreservesFields(t *testing.T) {
+	m := NewManager()
+	createdAt := time.Now().Add(-10 * time.Minute).Truncate(time.Millisecond)
+	expiresAt := time.Now().Add(50 * time.Minute).Truncate(time.Millisecond)
+
+	m.Recover("rec-1", "python", "10.0.0.1",
+		[]int{3000, 8080}, true,
+		map[string]string{"FOO": "bar"},
+		map[string]string{"owner": "alice"},
+		[]string{"sudo"},
+		createdAt, expiresAt,
+		true,
+	)
+
+	got, err := m.Get("rec-1")
+	if err != nil {
+		t.Fatalf("Get() error: %v", err)
+	}
+	if got.Status != v1.StatusRunning {
+		t.Errorf("status: expected running, got %q", got.Status)
+	}
+	if !reflect.DeepEqual(got.Ports, []int{3000, 8080}) {
+		t.Errorf("ports: got %v", got.Ports)
+	}
+	if got.Env["FOO"] != "bar" {
+		t.Errorf("env: got %v", got.Env)
+	}
+	if got.Metadata["owner"] != "alice" {
+		t.Errorf("metadata: got %v", got.Metadata)
+	}
+	if !reflect.DeepEqual(got.Capabilities, []string{"sudo"}) {
+		t.Errorf("capabilities: got %v", got.Capabilities)
+	}
+	if !got.CreatedAt.Equal(createdAt) {
+		t.Errorf("createdAt: got %v want %v", got.CreatedAt, createdAt)
+	}
+	if !got.ExpiresAt.Equal(expiresAt) {
+		t.Errorf("expiresAt: got %v want %v", got.ExpiresAt, expiresAt)
+	}
+}
+
+func TestManager_Recover_ZeroTimesFallBack(t *testing.T) {
+	m := NewManager()
+	before := time.Now()
+	m.Recover("rec-2", "base", "10.0.0.2", nil, false, nil, nil, nil,
+		time.Time{}, time.Time{}, false)
+	got, _ := m.Get("rec-2")
+
+	if got.CreatedAt.Before(before) {
+		t.Errorf("createdAt fallback should be >= call time, got %v", got.CreatedAt)
+	}
+	if got.ExpiresAt.Before(before) {
+		t.Errorf("expiresAt fallback should be future, got %v", got.ExpiresAt)
+	}
+}
+
 func TestManager_CreateAndGet(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, []int{3000}, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, []int{3000}, false, nil, nil, nil)
 
 	if sbx.ID == "" {
 		t.Fatal("expected non-empty sandbox ID")
@@ -41,9 +98,9 @@ func TestManager_GetNotFound(t *testing.T) {
 
 func TestManager_List(t *testing.T) {
 	m := NewManager()
-	m.Create("nodejs", time.Hour, nil, false, nil, nil)
-	m.Create("python", time.Hour, nil, false, nil, nil)
-	m.Create("go", time.Hour, nil, false, nil, nil)
+	m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
+	m.Create("python", time.Hour, nil, false, nil, nil, nil)
+	m.Create("go", time.Hour, nil, false, nil, nil, nil)
 
 	list := m.List()
 	if len(list) != 3 {
@@ -64,7 +121,7 @@ func TestManager_ListEmpty(t *testing.T) {
 
 func TestManager_SetStatus(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.SetStatus(sbx.ID, v1.StatusRunning)
 
@@ -76,7 +133,7 @@ func TestManager_SetStatus(t *testing.T) {
 
 func TestManager_SetPodIP(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.SetPodIP(sbx.ID, "10.0.0.5")
 
@@ -88,7 +145,7 @@ func TestManager_SetPodIP(t *testing.T) {
 
 func TestManager_Remove(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 
 	m.Remove(sbx.ID)
 
@@ -100,7 +157,7 @@ func TestManager_Remove(t *testing.T) {
 
 func TestManager_ExtendTimeout(t *testing.T) {
 	m := NewManager()
-	sbx := m.Create("nodejs", time.Minute, nil, false, nil, nil)
+	sbx := m.Create("nodejs", time.Minute, nil, false, nil, nil, nil)
 
 	err := m.ExtendTimeout(sbx.ID, 2*time.Hour)
 	if err != nil {
@@ -128,9 +185,9 @@ func TestManager_GetExpired(t *testing.T) {
 	m := NewManager()
 
 	// Create a sandbox that expires immediately
-	expired := m.Create("nodejs", time.Millisecond, nil, false, nil, nil)
+	expired := m.Create("nodejs", time.Millisecond, nil, false, nil, nil, nil)
 	// Create a sandbox with long timeout
-	m.Create("python", time.Hour, nil, false, nil, nil)
+	m.Create("python", time.Hour, nil, false, nil, nil, nil)
 
 	// Wait for the short-timeout sandbox to expire
 	time.Sleep(5 * time.Millisecond)
@@ -147,7 +204,7 @@ func TestManager_GetExpired(t *testing.T) {
 func TestManager_GetExpired_SkipsStopped(t *testing.T) {
 	m := NewManager()
 
-	sbx := m.Create("nodejs", 0, nil, false, nil, nil)
+	sbx := m.Create("nodejs", 0, nil, false, nil, nil, nil)
 	m.SetStatus(sbx.ID, v1.StatusStopped)
 
 	expiredIDs := m.GetExpired()
@@ -165,7 +222,7 @@ func TestManager_ConcurrentAccess(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil)
+			sbx := m.Create("nodejs", time.Hour, nil, false, nil, nil, nil)
 			m.Get(sbx.ID)
 			m.List()
 			m.SetStatus(sbx.ID, v1.StatusRunning)

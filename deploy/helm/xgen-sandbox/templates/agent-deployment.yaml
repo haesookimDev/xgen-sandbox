@@ -73,6 +73,14 @@ spec:
               value: {{ .Values.sandbox.maxTimeout }}
             - name: WARM_POOL_SIZE
               value: "{{ .Values.sandbox.warmPoolSize }}"
+            {{- if .Values.sandbox.warmPoolSizes }}
+            - name: WARM_POOL_SIZES
+              value: {{ .Values.sandbox.warmPoolSizes | quote }}
+            {{- end }}
+            {{- if hasKey .Values.sandbox "warmPoolCapabilities" }}
+            - name: WARM_POOL_CAPABILITIES
+              value: {{ .Values.sandbox.warmPoolCapabilities | quote }}
+            {{- end }}
             {{- if .Values.sandbox.imagePullPolicy }}
             - name: IMAGE_PULL_POLICY
               value: {{ .Values.sandbox.imagePullPolicy }}

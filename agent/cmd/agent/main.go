@@ -64,9 +64,13 @@ func main() {
 						log.Printf("warm pool: connect to sidecar %s: %v", sandboxID, err)
 						return
 					}
-					// Extract template from pod labels via pod info
-					warmPool.MarkReady(sandboxID, "base")
-					log.Printf("warm pool: pod %s is ready", sandboxID)
+					// Use the pod's own template + capability labels to
+					// compute the pool key. The previous hardcoded "base"
+					// caused every warm pod (nodejs, python, sudo variants)
+					// to land in the base pool and never be claimed.
+					poolKey := k8spkg.PoolKeyFor(info.Template, info.Capabilities)
+					warmPool.MarkReady(sandboxID, poolKey)
+					log.Printf("warm pool: pod %s is ready (pool=%s)", sandboxID, poolKey)
 				}
 				return
 			}
@@ -89,7 +93,7 @@ func main() {
 		log.Fatalf("init pod manager: %v", initErr)
 	}
 
-	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize, cfg.WarmPoolSizes)
+	warmPool = k8spkg.NewWarmPool(podMgr, cfg.WarmPoolSize, cfg.WarmPoolSizes, cfg.WarmPoolCapabilities)
 	auditStore := audit.NewStore(1000)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -101,7 +105,20 @@ func main() {
 		log.Printf("warning: sandbox recovery failed: %v", recoverErr)
 	} else if len(recovered) > 0 {
 		for _, rs := range recovered {
-			sandboxMgr.Recover(rs.SandboxID, rs.Template, rs.PodIP, nil, false, cfg.DefaultTimeout, rs.Ready)
+			// expiresAt falls back to now + DefaultTimeout only when the
+			// pod predates the annotation scheme (or the annotation was
+			// malformed). With annotations present the original expiry is
+			// honored across restarts.
+			expiresAt := rs.ExpiresAt
+			if expiresAt.IsZero() {
+				expiresAt = time.Now().Add(cfg.DefaultTimeout)
+			}
+			sandboxMgr.Recover(
+				rs.SandboxID, rs.Template, rs.PodIP,
+				rs.Ports, rs.GUI, rs.Env, rs.Metadata,
+				rs.Capabilities, rs.CreatedAt, expiresAt,
+				rs.Ready,
+			)
 			if rs.Ready && rs.PodIP != "" {
 				rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
 				if err := wsProxy.ConnectToSidecar(rctx, rs.SandboxID, rs.PodIP); err != nil {

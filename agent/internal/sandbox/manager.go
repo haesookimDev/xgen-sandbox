@@ -17,9 +17,10 @@ type Sandbox struct {
 	Template    string
 	Ports       []int
 	GUI         bool
-	Env         map[string]string
-	Metadata    map[string]string
-	CreatedAt   time.Time
+	Env          map[string]string
+	Metadata     map[string]string
+	Capabilities []string
+	CreatedAt    time.Time
 	ExpiresAt   time.Time
 	PodIP       string
 }
@@ -38,20 +39,21 @@ func NewManager() *Manager {
 }
 
 // Create registers a new sandbox and returns its ID.
-func (m *Manager) Create(template string, timeout time.Duration, ports []int, gui bool, env, metadata map[string]string) *Sandbox {
+func (m *Manager) Create(template string, timeout time.Duration, ports []int, gui bool, env, metadata map[string]string, capabilities []string) *Sandbox {
 	id := generateID()
 	now := time.Now()
 
 	sbx := &Sandbox{
-		ID:        id,
-		Status:    v1.StatusStarting,
-		Template:  template,
-		Ports:     ports,
-		GUI:       gui,
-		Env:       env,
-		Metadata:  metadata,
-		CreatedAt: now,
-		ExpiresAt: now.Add(timeout),
+		ID:           id,
+		Status:       v1.StatusStarting,
+		Template:     template,
+		Ports:        ports,
+		GUI:          gui,
+		Env:          env,
+		Metadata:     metadata,
+		Capabilities: capabilities,
+		CreatedAt:    now,
+		ExpiresAt:    now.Add(timeout),
 	}
 
 	m.mu.Lock()
@@ -135,21 +137,48 @@ func (m *Manager) GetExpired() []string {
 }
 
 // Recover re-registers a sandbox that was found in K8s after an agent restart.
-func (m *Manager) Recover(id, template, podIP string, ports []int, gui bool, timeout time.Duration, ready bool) {
+//
+// The caller is responsible for reading state from pod annotations and
+// passing it in; this method is storage-only and does not consult K8s.
+// A zero createdAt or expiresAt signals "unknown" — caller should have
+// substituted a fallback (e.g. now + DefaultTimeout) before invocation,
+// because Manager does not hold config.
+func (m *Manager) Recover(
+	id, template, podIP string,
+	ports []int,
+	gui bool,
+	env, metadata map[string]string,
+	capabilities []string,
+	createdAt, expiresAt time.Time,
+	ready bool,
+) {
 	status := v1.StatusStarting
 	if ready {
 		status = v1.StatusRunning
 	}
 
+	now := time.Now()
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if expiresAt.IsZero() {
+		// Caller failed to provide one — give the sandbox a short grace
+		// period so it does not get reaped immediately.
+		expiresAt = now.Add(time.Hour)
+	}
+
 	sbx := &Sandbox{
-		ID:        id,
-		Status:    status,
-		Template:  template,
-		Ports:     ports,
-		GUI:       gui,
-		PodIP:     podIP,
-		CreatedAt: time.Now(),
-		ExpiresAt: time.Now().Add(timeout),
+		ID:           id,
+		Status:       status,
+		Template:     template,
+		Ports:        ports,
+		GUI:          gui,
+		Env:          env,
+		Metadata:     metadata,
+		PodIP:        podIP,
+		Capabilities: capabilities,
+		CreatedAt:    createdAt,
+		ExpiresAt:    expiresAt,
 	}
 
 	m.mu.Lock()

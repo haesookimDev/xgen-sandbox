@@ -37,8 +37,11 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.MaxTimeout != 24*time.Hour {
 		t.Errorf("MaxTimeout: expected 24h, got %v", cfg.MaxTimeout)
 	}
-	if cfg.WarmPoolSize != 0 {
-		t.Errorf("WarmPoolSize: expected 0, got %d", cfg.WarmPoolSize)
+	if cfg.WarmPoolSize != 1 {
+		t.Errorf("WarmPoolSize: expected 1 (warm pool now on by default), got %d", cfg.WarmPoolSize)
+	}
+	if len(cfg.WarmPoolCapabilities) != 1 || cfg.WarmPoolCapabilities[0] != "sudo" {
+		t.Errorf("WarmPoolCapabilities: expected [sudo] default, got %v", cfg.WarmPoolCapabilities)
 	}
 	if cfg.APIKey != "" {
 		t.Errorf("APIKey: expected empty string (no default), got %q", cfg.APIKey)
@@ -75,8 +78,33 @@ func TestLoad_InvalidIntFallsBackToDefault(t *testing.T) {
 
 	cfg := Load()
 
-	if cfg.WarmPoolSize != 0 {
-		t.Errorf("WarmPoolSize: expected 0 (default), got %d", cfg.WarmPoolSize)
+	if cfg.WarmPoolSize != 1 {
+		t.Errorf("WarmPoolSize: expected 1 (default), got %d", cfg.WarmPoolSize)
+	}
+}
+
+func TestLoad_WarmPoolCapabilitiesCustom(t *testing.T) {
+	t.Setenv("WARM_POOL_CAPABILITIES", "sudo, git-ssh ,")
+	cfg := Load()
+	want := []string{"sudo", "git-ssh"}
+	if len(cfg.WarmPoolCapabilities) != len(want) {
+		t.Fatalf("WarmPoolCapabilities: got %v, want %v", cfg.WarmPoolCapabilities, want)
+	}
+	for i, c := range want {
+		if cfg.WarmPoolCapabilities[i] != c {
+			t.Errorf("WarmPoolCapabilities[%d]: got %q want %q", i, cfg.WarmPoolCapabilities[i], c)
+		}
+	}
+}
+
+func TestLoad_WarmPoolCapabilitiesDisabled(t *testing.T) {
+	t.Setenv("WARM_POOL_CAPABILITIES", "")
+	cfg := Load()
+	// Empty value means "no caps to pre-warm" — should default to "sudo"
+	// via envOrDefault fallback; explicit disabling uses a placeholder we
+	// accept as empty after trimming, so this is a regression check.
+	if len(cfg.WarmPoolCapabilities) != 1 || cfg.WarmPoolCapabilities[0] != "sudo" {
+		t.Errorf("empty WARM_POOL_CAPABILITIES should fall back to default [sudo], got %v", cfg.WarmPoolCapabilities)
 	}
 }
 

@@ -22,10 +22,11 @@ func (s *Server) handleAdminSummary(w http.ResponseWriter, r *http.Request) {
 		byTemplate[sbx.Template]++
 	}
 
-	// Read warm pool status
+	// Read warm pool status. Keys are pool identifiers ("template" or
+	// "template/caps"), preserved as-is so admin UI can group by template.
 	warmPoolInfo := make(map[string]v1.WarmPoolInfo)
-	for tmpl, detail := range s.warmPool.Status() {
-		warmPoolInfo[tmpl] = v1.WarmPoolInfo{
+	for key, detail := range s.warmPool.Status() {
+		warmPoolInfo[key] = v1.WarmPoolInfo{
 			Available: detail.Available,
 			Target:    detail.Target,
 		}
@@ -89,15 +90,17 @@ func (s *Server) handleAdminAuditLogs(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleAdminWarmPool returns detailed warm pool state per template.
+// handleAdminWarmPool returns detailed warm pool state per
+// (template, capability-set) pair.
 func (s *Server) handleAdminWarmPool(w http.ResponseWriter, r *http.Request) {
 	status := s.warmPool.Status()
 	pools := make([]v1.WarmPoolDetail, 0, len(status))
-	for tmpl, detail := range status {
+	for _, detail := range status {
 		pools = append(pools, v1.WarmPoolDetail{
-			Template:  tmpl,
-			Available: detail.Available,
-			Target:    detail.Target,
+			Template:     detail.Template,
+			Capabilities: detail.Capabilities,
+			Available:    detail.Available,
+			Target:       detail.Target,
 		})
 	}
 

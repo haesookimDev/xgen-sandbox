@@ -1,0 +1,8 @@
+{
+  "dependencies": {
+    "@xgen-sandbox/sdk": "file:../../sdks/typescript"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}

@@ -26,9 +26,10 @@ type CreateSandboxRequest struct {
 	Timeout   int               `json:"timeout_seconds,omitempty"`
 	Resources *ResourceSpec     `json:"resources,omitempty"`
 	Env       map[string]string `json:"env,omitempty"`
-	Ports     []int             `json:"ports,omitempty"`
-	GUI       bool              `json:"gui,omitempty"`
-	Metadata  map[string]string `json:"metadata,omitempty"`
+	Ports        []int             `json:"ports,omitempty"`
+	GUI          bool              `json:"gui,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
 }
 
 // SandboxResponse is the response body for sandbox operations.
@@ -39,9 +40,10 @@ type SandboxResponse struct {
 	WsURL       string            `json:"ws_url"`
 	PreviewURLs map[int]string    `json:"preview_urls,omitempty"`
 	VncURL      *string           `json:"vnc_url,omitempty"`
-	CreatedAt   time.Time         `json:"created_at"`
-	ExpiresAt   time.Time         `json:"expires_at"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
+	CreatedAt    time.Time         `json:"created_at"`
+	ExpiresAt    time.Time         `json:"expires_at"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
 }
 
 // ExecRequest is the request body for POST /api/v1/sandboxes/:id/exec.
@@ -104,11 +106,15 @@ type AdminWarmPoolResponse struct {
 	Pools []WarmPoolDetail `json:"pools"`
 }
 
-// WarmPoolDetail represents detailed warm pool state for a single template.
+// WarmPoolDetail represents detailed warm pool state for a single
+// (template, capability-set) pair. Capabilities was added when the warm
+// pool became capability-aware; omitted JSON for backwards compat when
+// the pool has no caps.
 type WarmPoolDetail struct {
-	Template  string `json:"template"`
-	Available int    `json:"available"`
-	Target    int    `json:"target"`
+	Template     string   `json:"template"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Available    int      `json:"available"`
+	Target       int      `json:"target"`
 }
 
 // AdminAuditLogsResponse is the response body for GET /api/v1/admin/audit-logs.

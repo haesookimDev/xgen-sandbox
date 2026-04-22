@@ -30,6 +30,8 @@ class SandboxInfo:
     """ISO 8601 timestamp of when the sandbox will expire."""
     metadata: dict[str, str] | None = None
     """User-defined metadata."""
+    capabilities: list[str] | None = None
+    """Active runtime capabilities for this sandbox."""
 
 
 @dataclass
@@ -48,6 +50,8 @@ class CreateSandboxOptions:
     """Enable GUI (VNC) desktop environment."""
     metadata: dict[str, str] | None = None
     """Arbitrary key-value metadata attached to the sandbox."""
+    capabilities: list[str] | None = None
+    """Runtime capabilities: ``"sudo"``, ``"git-ssh"``, ``"browser"``."""
 
 
 @dataclass

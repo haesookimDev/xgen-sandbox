@@ -21,6 +21,8 @@ export interface CreateSandboxOptions {
   gui?: boolean;
   /** Arbitrary key-value metadata attached to the sandbox. */
   metadata?: Record<string, string>;
+  /** Runtime capabilities: "sudo", "git-ssh", "browser". */
+  capabilities?: string[];
 }
 
 /** Runtime information about a sandbox instance. */
@@ -43,6 +45,8 @@ export interface SandboxInfo {
   expiresAt: string;
   /** User-defined metadata. */
   metadata?: Record<string, string>;
+  /** Active runtime capabilities for this sandbox. */
+  capabilities?: string[];
 }
 
 /** Options for command execution. */

@@ -128,7 +128,7 @@ securityContext:
     drop: ["ALL"]
 ```
 
-**Runtime container:**
+**Runtime container (default):**
 
 ```yaml
 securityContext:
@@ -136,6 +136,18 @@ securityContext:
   capabilities:
     drop: ["ALL"]
 ```
+
+**Runtime container (with `sudo` or `browser` capability):**
+
+```yaml
+securityContext:
+  allowPrivilegeEscalation: true
+  capabilities:
+    drop: ["ALL"]
+    add: ["SETUID", "SETGID"]
+```
+
+When the `sudo` or `browser` capability is requested, the runtime container uses a `-sudo` image variant with passwordless sudo configured. The `SETUID`/`SETGID` capabilities and `allowPrivilegeEscalation: true` are required for `sudo` to function. All other capabilities remain dropped, and the pod-level seccomp profile still applies.
 
 Root filesystem is writable for the runtime container because user code may need to install packages.
 
@@ -185,6 +197,16 @@ Blocked outbound destinations:
 - `192.168.0.0/16` (internal cluster network)
 
 This prevents sandboxes from scanning or attacking internal cluster services while allowing normal internet access.
+
+**Per-pod NetworkPolicy (`git-ssh` capability):**
+
+When the `git-ssh` capability is requested, the Agent creates an additional NetworkPolicy scoped to the specific sandbox pod (via `xgen.io/sandbox-id` label selector):
+
+| Destination | Ports | Purpose |
+|-------------|-------|---------|
+| Public internet (excludes private IPs) | 22/TCP | SSH-based git operations |
+
+This policy is additive — the pod gets the union of the base policy (80/443/53) and the git-ssh policy (22). The per-pod NetworkPolicy is automatically deleted when the sandbox is destroyed.
 
 ---
 

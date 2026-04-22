@@ -61,6 +61,7 @@ POST /api/v1/sandboxes
   },
   "ports": [3000, 8080],
   "gui": false,
+  "capabilities": ["sudo", "git-ssh"],
   "metadata": {
     "user": "alice",
     "project": "demo"
@@ -76,7 +77,18 @@ POST /api/v1/sandboxes
 | `env` | object | — | Environment variables for the runtime container |
 | `ports` | int[] | — | Ports to expose via preview URLs |
 | `gui` | bool | `false` | Enable VNC desktop (adds VNC container) |
+| `capabilities` | string[] | — | Runtime capabilities (see below) |
 | `metadata` | object | — | Arbitrary key-value metadata |
+
+#### Capabilities
+
+Capabilities are opt-in features that extend the sandbox runtime. Pass them as a string array:
+
+| Capability | Description |
+|------------|-------------|
+| `sudo` | Enables `sudo` inside the sandbox. Uses a `-sudo` image variant with passwordless sudo configured for the `sandbox` user. Adds `SETUID`/`SETGID` Linux capabilities to the container. |
+| `git-ssh` | Allows outbound SSH connections (port 22) for `git clone` over SSH. Creates a per-pod NetworkPolicy. Configure SSH keys via `exec` after creation. |
+| `browser` | Installs Chromium browser in the sandbox. Implies `gui: true` and `sudo`. Automatically sets minimum resources to 2 CPU / 2Gi memory. |
 
 **Response:** `201 Created`
 
@@ -93,6 +105,7 @@ POST /api/v1/sandboxes
   "vnc_url": null,
   "created_at": "2024-01-15T12:00:00Z",
   "expires_at": "2024-01-15T13:00:00Z",
+  "capabilities": ["sudo", "git-ssh"],
   "metadata": {
     "user": "alice",
     "project": "demo"
@@ -100,7 +113,7 @@ POST /api/v1/sandboxes
 }
 ```
 
-When `gui: true`, the response includes a `vnc_url`:
+When `gui: true` (or `browser` capability), the response includes a `vnc_url`:
 
 ```json
 {

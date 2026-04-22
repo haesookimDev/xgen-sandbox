@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/util/intstr"
@@ -20,12 +22,18 @@ import (
 )
 
 // PodInfo holds cached information about a sandbox pod.
+//
+// Template and Capabilities come from labels at watch-event time so the
+// agent onReady callback can compute the warm-pool key without a second
+// round trip to the K8s API.
 type PodInfo struct {
-	SandboxID string
-	PodName   string
-	PodIP     string
-	Phase     corev1.PodPhase
-	Ready     bool
+	SandboxID    string
+	PodName      string
+	PodIP        string
+	Phase        corev1.PodPhase
+	Ready        bool
+	Template     string
+	Capabilities []string
 }
 
 // PodManager handles K8s pod lifecycle for sandboxes.
@@ -124,11 +132,13 @@ func (pm *PodManager) watchPods(ctx context.Context) {
 				existing := pm.pods[sandboxID]
 				wasReady := existing != nil && existing.Ready
 				pm.pods[sandboxID] = &PodInfo{
-					SandboxID: sandboxID,
-					PodName:   pod.Name,
-					PodIP:     pod.Status.PodIP,
-					Phase:     pod.Status.Phase,
-					Ready:     ready,
+					SandboxID:    sandboxID,
+					PodName:      pod.Name,
+					PodIP:        pod.Status.PodIP,
+					Phase:        pod.Status.Phase,
+					Ready:        ready,
+					Template:     pod.Labels["xgen.io/template"],
+					Capabilities: capabilitiesFromLabels(pod.Labels),
 				}
 				pm.mu.Unlock()
 
@@ -173,9 +183,56 @@ var maxResourceLimits = ResourceSpec{
 	Memory: "4Gi",
 }
 
+// capSet converts a capabilities slice to a set for fast lookup.
+func capSet(capabilities []string) map[string]bool {
+	s := make(map[string]bool, len(capabilities))
+	for _, c := range capabilities {
+		s[c] = true
+	}
+	return s
+}
+
+// capabilitiesFromLabels extracts capability values from xgen.io/cap-*
+// labels in lexicographic order. Used by the watcher and by recovery so
+// a pod's capability set is always available without re-reading
+// annotations (which may be missing on legacy pods).
+func capabilitiesFromLabels(labels map[string]string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	var out []string
+	for key := range labels {
+		if strings.HasPrefix(key, "xgen.io/cap-") {
+			out = append(out, strings.TrimPrefix(key, "xgen.io/cap-"))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
+}
+
 // CreatePod creates a new sandbox pod.
-func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string, env map[string]string, ports []int, gui bool, resources ...*ResourceSpec) error {
-	runtimeImage := pm.runtimeImageForTemplate(template)
+//
+// metadata, createdAt, expiresAt are persisted as xgen.io/* annotations so
+// the agent can recover full sandbox state after a restart (see
+// RecoverExistingPods). Pass nil / time.Time{} when no persistence is
+// needed — e.g. warm-pool pre-warms, which become real sandboxes only
+// when claimed.
+func (pm *PodManager) CreatePod(
+	ctx context.Context,
+	sandboxID, template string,
+	env map[string]string,
+	ports []int,
+	gui bool,
+	capabilities []string,
+	metadata map[string]string,
+	createdAt, expiresAt time.Time,
+	resources ...*ResourceSpec,
+) error {
+	caps := capSet(capabilities)
+	runtimeImage := pm.runtimeImageForTemplate(template, caps)
 
 	if len(env) > maxEnvVars {
 		return fmt.Errorf("too many environment variables: %d (max %d)", len(env), maxEnvVars)
@@ -192,13 +249,17 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 	}
 
 	sandboxUser := int64(1000)
-	restrictedSC := &corev1.SecurityContext{
+	needsSudo := caps["sudo"] || caps["browser"]
+	runtimeSC := &corev1.SecurityContext{
 		RunAsUser:                &sandboxUser,
 		RunAsNonRoot:             boolPtr(true),
-		AllowPrivilegeEscalation: boolPtr(false),
+		AllowPrivilegeEscalation: boolPtr(needsSudo),
 		Capabilities: &corev1.Capabilities{
 			Drop: []corev1.Capability{"ALL"},
 		},
+	}
+	if needsSudo {
+		runtimeSC.Capabilities.Add = []corev1.Capability{"SETUID", "SETGID"}
 	}
 
 	rootUser := int64(0)
@@ -224,9 +285,13 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			SecurityContext: &corev1.SecurityContext{
 				RunAsUser:              &rootUser,
 				ReadOnlyRootFilesystem: boolPtr(true),
+				// Must be true so the kernel does not set no_new_privs on sidecar
+				// processes; otherwise setuid-bit binaries (sudo) inside the
+				// chrooted runtime rootfs silently fail to escalate.
+				AllowPrivilegeEscalation: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
-					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN"},
+					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN", "SETUID", "SETGID", "AUDIT_WRITE"},
 				},
 			},
 			ReadinessProbe: &corev1.Probe{
@@ -249,7 +314,7 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 			ImagePullPolicy: pm.pullPolicy,
 			Command:         []string{"sleep", "infinity"},
 			Env:             envVars,
-			SecurityContext: restrictedSC,
+			SecurityContext: runtimeSC,
 			Resources:       runtimeResources(resources...),
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "workspace", MountPath: "/home/sandbox/workspace"},
@@ -288,16 +353,38 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		})
 	}
 
+	// Build pod labels including capability markers
+	labels := map[string]string{
+		"app.kubernetes.io/name": "xgen-sandbox",
+		"xgen.io/sandbox-id":    sandboxID,
+		"xgen.io/template":      template,
+	}
+	for _, c := range capabilities {
+		labels["xgen.io/cap-"+c] = "true"
+	}
+
+	// Persist sandbox state as annotations so it survives agent restarts.
+	// Warm-pool pre-warms pass zero values; nothing is written then.
+	annotations, err := SandboxAnnotations{
+		Metadata:     metadata,
+		Env:          env,
+		Ports:        ports,
+		GUI:          gui,
+		Capabilities: capabilities,
+		CreatedAt:    createdAt,
+		ExpiresAt:    expiresAt,
+	}.Encode()
+	if err != nil {
+		return fmt.Errorf("encode sandbox annotations: %w", err)
+	}
+
 	shareProcessNamespace := true
 	pod := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sbx-" + sandboxID,
-			Namespace: pm.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/name": "xgen-sandbox",
-				"xgen.io/sandbox-id":    sandboxID,
-				"xgen.io/template":      template,
-			},
+			Name:        "sbx-" + sandboxID,
+			Namespace:   pm.namespace,
+			Labels:      labels,
+			Annotations: annotations,
 		},
 		Spec: corev1.PodSpec{
 			ShareProcessNamespace:        &shareProcessNamespace,
@@ -323,16 +410,89 @@ func (pm *PodManager) CreatePod(ctx context.Context, sandboxID, template string,
 		},
 	}
 
-	_, err := pm.client.CoreV1().Pods(pm.namespace).Create(ctx, pod, metav1.CreateOptions{})
-	if err != nil {
+	if _, err := pm.client.CoreV1().Pods(pm.namespace).Create(ctx, pod, metav1.CreateOptions{}); err != nil {
 		return fmt.Errorf("create pod: %w", err)
+	}
+
+	// Create per-pod NetworkPolicy for git-ssh capability
+	if caps["git-ssh"] {
+		if err := pm.createGitSSHNetworkPolicy(ctx, sandboxID); err != nil {
+			log.Printf("warning: failed to create git-ssh network policy for %s: %v", sandboxID, err)
+		}
 	}
 
 	return nil
 }
 
+// createGitSSHNetworkPolicy creates a per-pod NetworkPolicy allowing port 22 egress.
+func (pm *PodManager) createGitSSHNetworkPolicy(ctx context.Context, sandboxID string) error {
+	port22 := intstr.FromInt32(22)
+	tcp := corev1.ProtocolTCP
+	np := &networkingv1.NetworkPolicy{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sbx-" + sandboxID + "-git-ssh",
+			Namespace: pm.namespace,
+			Labels: map[string]string{
+				"xgen.io/sandbox-id": sandboxID,
+			},
+		},
+		Spec: networkingv1.NetworkPolicySpec{
+			PodSelector: metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"xgen.io/sandbox-id":  sandboxID,
+					"xgen.io/cap-git-ssh": "true",
+				},
+			},
+			PolicyTypes: []networkingv1.PolicyType{networkingv1.PolicyTypeEgress},
+			Egress: []networkingv1.NetworkPolicyEgressRule{
+				{
+					To: []networkingv1.NetworkPolicyPeer{
+						{
+							IPBlock: &networkingv1.IPBlock{
+								CIDR: "0.0.0.0/0",
+								Except: []string{
+									"10.0.0.0/8",
+									"172.16.0.0/12",
+									"192.168.0.0/16",
+								},
+							},
+						},
+					},
+					Ports: []networkingv1.NetworkPolicyPort{
+						{Port: &port22, Protocol: &tcp},
+					},
+				},
+			},
+		},
+	}
+
+	_, err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).Create(ctx, np, metav1.CreateOptions{})
+	if err != nil {
+		return fmt.Errorf("create git-ssh network policy: %w", err)
+	}
+	return nil
+}
+
+// deleteCapabilityNetworkPolicies removes any per-pod NetworkPolicies for a sandbox.
+func (pm *PodManager) deleteCapabilityNetworkPolicies(ctx context.Context, sandboxID string) {
+	nps, err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "xgen.io/sandbox-id=" + sandboxID,
+	})
+	if err != nil {
+		log.Printf("warning: failed to list network policies for %s: %v", sandboxID, err)
+		return
+	}
+	for _, np := range nps.Items {
+		if err := pm.client.NetworkingV1().NetworkPolicies(pm.namespace).Delete(ctx, np.Name, metav1.DeleteOptions{}); err != nil {
+			log.Printf("warning: failed to delete network policy %s: %v", np.Name, err)
+		}
+	}
+}
+
 // DeletePod deletes a sandbox pod with a 10-second grace period.
 func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
+	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
+
 	podName := "sbx-" + sandboxID
 	gracePeriod := int64(10)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
@@ -351,6 +511,8 @@ func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 
 // ForceDeletePod immediately deletes a sandbox pod with no grace period.
 func (pm *PodManager) ForceDeletePod(ctx context.Context, sandboxID string) error {
+	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
+
 	podName := "sbx-" + sandboxID
 	zero := int64(0)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
@@ -387,15 +549,33 @@ func (pm *PodManager) RemapPod(oldID, newID string) {
 }
 
 // RecoveredSandbox holds state recovered from an existing K8s pod.
+//
+// Identity (SandboxID, Template, PodIP, Ready) comes from labels + status;
+// the rest (ports, gui, env, metadata, capabilities, expiry) is restored
+// from the xgen.io/* annotations written at CreatePod time. Fields may be
+// zero when the pod predates the annotation scheme — callers should fall
+// back to sensible defaults in that case.
 type RecoveredSandbox struct {
-	SandboxID string
-	Template  string
-	PodIP     string
-	Ready     bool
+	SandboxID    string
+	Template     string
+	PodIP        string
+	Ready        bool
+	Metadata     map[string]string
+	Env          map[string]string
+	Ports        []int
+	GUI          bool
+	Capabilities []string
+	CreatedAt    time.Time
+	ExpiresAt    time.Time
 }
 
 // RecoverExistingPods scans K8s for sandbox pods that survived an agent restart
 // and returns their state so the sandbox manager can re-register them.
+//
+// The function reads annotations via DecodeAnnotations, which is tolerant:
+// malformed individual fields degrade to zero values instead of skipping
+// the whole pod. Warm-pool pods (sandbox-id prefix "warm-") are skipped so
+// they stay owned by the warm-pool subsystem.
 func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandbox, error) {
 	pods, err := pm.client.CoreV1().Pods(pm.namespace).List(ctx, metav1.ListOptions{
 		LabelSelector: "app.kubernetes.io/name=xgen-sandbox",
@@ -415,20 +595,37 @@ func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandb
 			continue
 		}
 
+		ann := DecodeAnnotations(pod.Annotations)
+		// Capabilities fall back to label markers for pods created before
+		// the annotation scheme (labels have always been written).
+		capabilities := ann.Capabilities
+		if len(capabilities) == 0 {
+			capabilities = capabilitiesFromLabels(pod.Labels)
+		}
+
 		ready := isPodReady(&pod)
 		pm.pods[sandboxID] = &PodInfo{
-			SandboxID: sandboxID,
-			PodName:   pod.Name,
-			PodIP:     pod.Status.PodIP,
-			Phase:     pod.Status.Phase,
-			Ready:     ready,
+			SandboxID:    sandboxID,
+			PodName:      pod.Name,
+			PodIP:        pod.Status.PodIP,
+			Phase:        pod.Status.Phase,
+			Ready:        ready,
+			Template:     template,
+			Capabilities: capabilities,
 		}
 
 		recovered = append(recovered, RecoveredSandbox{
-			SandboxID: sandboxID,
-			Template:  template,
-			PodIP:     pod.Status.PodIP,
-			Ready:     ready,
+			SandboxID:    sandboxID,
+			Template:     template,
+			PodIP:        pod.Status.PodIP,
+			Ready:        ready,
+			Metadata:     ann.Metadata,
+			Env:          ann.Env,
+			Ports:        ann.Ports,
+			GUI:          ann.GUI,
+			Capabilities: capabilities,
+			CreatedAt:    ann.CreatedAt,
+			ExpiresAt:    ann.ExpiresAt,
 		})
 	}
 
@@ -446,17 +643,35 @@ func (pm *PodManager) ListPods() []*PodInfo {
 	return result
 }
 
-func (pm *PodManager) runtimeImageForTemplate(template string) string {
+func (pm *PodManager) runtimeImageForTemplate(template string, caps map[string]bool) string {
+	if caps["browser"] {
+		return "ghcr.io/xgen-sandbox/runtime-gui-browser:latest"
+	}
+
+	hasSudo := caps["sudo"]
+
 	switch template {
 	case "nodejs":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-nodejs-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-nodejs:latest"
 	case "python":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-python-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-python:latest"
 	case "go":
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-go-sudo:latest"
+		}
 		return "ghcr.io/xgen-sandbox/runtime-go:latest"
 	case "gui":
 		return "ghcr.io/xgen-sandbox/runtime-gui:latest"
 	default:
+		if hasSudo {
+			return "ghcr.io/xgen-sandbox/runtime-base-sudo:latest"
+		}
 		return pm.runtime
 	}
 }

@@ -5,7 +5,8 @@ Kubernetes-based code execution sandbox platform. Run code, preview web services
 ## Features
 
 - **Isolated Execution** — Each sandbox runs in a dedicated K8s pod with security contexts, network policies, and resource limits
-- **Multi-runtime** — Base (Ubuntu), Node.js, Python, Go, GUI (Xvfb + VNC)
+- **Multi-runtime** — Base (Ubuntu), Node.js, Python, Go, GUI (Xvfb + VNC), with sudo/browser variants
+- **Runtime Capabilities** — Opt-in `sudo`, `git-ssh`, and `browser` capabilities per sandbox
 - **Custom Resources** — Per-sandbox CPU/memory limits via the API (`resources` field)
 - **Web Preview** — Expose sandbox ports via dynamic subdomain routing (`sbx-{id}-{port}.preview.example.com`)
 - **Interactive Terminal** — Full PTY support over WebSocket with xterm.js
@@ -89,11 +90,20 @@ const client = new XgenClient({
   agentUrl: "http://localhost:8080",
 });
 
-const sandbox = await client.createSandbox({ template: "nodejs" });
+const sandbox = await client.createSandbox({
+  template: "nodejs",
+  capabilities: ["sudo", "git-ssh"], // optional: enable sudo and SSH git
+});
 
 // Execute a command
 const result = await sandbox.exec("node -e \"console.log('Hello!')\"");
 console.log(result.stdout); // "Hello!\n"
+
+// Install system packages (requires "sudo" capability)
+await sandbox.exec("sudo apt-get update && sudo apt-get install -y ffmpeg");
+
+// Clone via SSH (requires "git-ssh" capability)
+await sandbox.exec("git clone git@github.com:user/repo.git");
 
 // Stream output
 for await (const event of sandbox.execStream("npm install")) {
@@ -130,7 +140,7 @@ See [docs/sdk-feature-matrix.md](docs/sdk-feature-matrix.md) for full details.
 xgen-sandbox/
 ├── agent/              # Go — Control plane (REST API, K8s pod management, WS proxy)
 ├── sidecar/            # Go — In-pod helper (exec, filesystem, port detection)
-├── runtime/            # Dockerfiles — base, nodejs, python, go, gui
+├── runtime/            # Dockerfiles — base, nodejs, python, go, gui + sudo/browser variants
 ├── sdks/
 │   ├── typescript/     # @xgen-sandbox/sdk
 │   ├── python/         # xgen-sandbox (PyPI)

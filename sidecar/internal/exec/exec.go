@@ -1,3 +1,5 @@
+//go:build linux
+
 package exec
 
 import (
@@ -52,6 +54,11 @@ func NewManager() *Manager {
 	}
 }
 
+// shellSingleQuote wraps s in POSIX single-quotes, escaping embedded quotes.
+func shellSingleQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
 // findRuntimePID finds the PID of the runtime container's init process ("sleep infinity").
 func findRuntimePID() (string, error) {
 	entries, err := os.ReadDir("/proc")
@@ -77,21 +84,40 @@ func findRuntimePID() (string, error) {
 }
 
 // Start launches a new process and returns it.
-// Commands run inside the runtime container's filesystem via chroot.
+// Commands run inside the runtime container via nsenter, not chroot. chroot
+// via /proc/PID/root triggers the kernel's cross-namespace procfs hardening,
+// which silently strips setuid-on-exec — so sudo and friends fail. nsenter
+// enters the runtime container's real mount namespace, where mount flags,
+// /etc/passwd, and setuid-bit handling behave exactly as they would for a
+// process started inside the container by Kubernetes itself.
 func (m *Manager) Start(opts StartOptions) (*Process, error) {
 	runtimePID, err := findRuntimePID()
 	if err != nil {
 		return nil, fmt.Errorf("find runtime container: %w", err)
 	}
 
-	runtimeRoot := filepath.Join("/proc", runtimePID, "root")
-	cmd := exec.Command(opts.Command, opts.Args...)
-
 	cwd := opts.Cwd
 	if cwd == "" {
 		cwd = "/home/sandbox/workspace"
 	}
-	cmd.Dir = cwd
+
+	// nsenter drops to UID/GID 1000 after entering the runtime's namespaces.
+	// Requires CAP_SETUID/CAP_SETGID on the sidecar container.
+	//
+	// We cd via a small sh wrapper instead of nsenter's --wd because --wd
+	// leaves the cwd dentry in a state where dash's startup getcwd() fails
+	// with ENOENT, which pollutes stderr for every exec.
+	cdScript := fmt.Sprintf("cd %s && exec \"$0\" \"$@\"", shellSingleQuote(cwd))
+	nsenterArgs := []string{
+		"--target", runtimePID,
+		"--mount", "--uts", "--ipc", "--pid", "--cgroup",
+		"--setuid", "1000",
+		"--setgid", "1000",
+		"--",
+		"sh", "-c", cdScript, opts.Command,
+	}
+	nsenterArgs = append(nsenterArgs, opts.Args...)
+	cmd := exec.Command("nsenter", nsenterArgs...)
 
 	cmd.Env = []string{
 		"PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
@@ -104,7 +130,6 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 	}
 
 	cmd.SysProcAttr = &syscall.SysProcAttr{
-		Chroot:  runtimeRoot,
 		Setpgid: true,
 	}
 
