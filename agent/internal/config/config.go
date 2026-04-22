@@ -20,6 +20,13 @@ type Config struct {
 	MaxTimeout          time.Duration
 	WarmPoolSize        int
 	WarmPoolSizes       map[string]int // template -> pool size (overrides WarmPoolSize)
+	// WarmPoolCapabilities lists capabilities to pre-warm alongside the
+	// empty-caps baseline. With the default ["sudo"] the pool warms six
+	// combos: base/"", base/"sudo", nodejs/"", nodejs/"sudo", python/"",
+	// python/"sudo". Set to an empty slice to disable per-capability
+	// pre-warming. "git-ssh" and "browser" are intentionally off by
+	// default (per-pod NetworkPolicy / 2Gi memory overhead).
+	WarmPoolCapabilities []string
 	ImagePullPolicy     string
 	RateLimitPerMinute  int
 	APIKey              string // single API key for Phase 1; replaced by DB lookup later
@@ -38,9 +45,13 @@ func Load() *Config {
 		ImagePullPolicy:  envOrDefault("IMAGE_PULL_POLICY", ""),
 		DefaultTimeout:   envDurationOrDefault("DEFAULT_TIMEOUT", 1*time.Hour),
 		MaxTimeout:       envDurationOrDefault("MAX_TIMEOUT", 24*time.Hour),
-		WarmPoolSize:       envIntOrDefault("WARM_POOL_SIZE", 0),
-		WarmPoolSizes:      parseWarmPoolSizes(os.Getenv("WARM_POOL_SIZES")),
-		RateLimitPerMinute: envIntOrDefault("RATE_LIMIT_PER_MINUTE", 120),
+		// Default is 1 (was 0): ship with warm pool enabled so first
+		// sandbox creations don't pay 15-30s of cold-start latency.
+		// Operators can still set WARM_POOL_SIZE=0 to disable.
+		WarmPoolSize:         envIntOrDefault("WARM_POOL_SIZE", 1),
+		WarmPoolSizes:        parseWarmPoolSizes(os.Getenv("WARM_POOL_SIZES")),
+		WarmPoolCapabilities: parseCapabilityList(envOrDefault("WARM_POOL_CAPABILITIES", "sudo")),
+		RateLimitPerMinute:   envIntOrDefault("RATE_LIMIT_PER_MINUTE", 120),
 		APIKey:           envOrDefault("API_KEY", ""),
 		JWTSecret:        envOrDefault("JWT_SECRET", ""),
 	}
@@ -69,6 +80,23 @@ func (c *Config) Validate() error {
 		}
 	}
 	return nil
+}
+
+// parseCapabilityList parses a CSV such as "sudo,git-ssh" into a trimmed
+// slice with empty entries dropped. Returns an empty (non-nil) slice
+// for an empty input so "disabled" is a distinct state from "default".
+func parseCapabilityList(raw string) []string {
+	out := []string{}
+	if raw == "" {
+		return out
+	}
+	for _, c := range strings.Split(raw, ",") {
+		c = strings.TrimSpace(c)
+		if c != "" {
+			out = append(out, c)
+		}
+	}
+	return out
 }
 
 // parseWarmPoolSizes parses "base:3,nodejs:2,gui:1" into a map.

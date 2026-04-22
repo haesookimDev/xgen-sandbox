@@ -36,7 +36,17 @@ sandbox:
   namespace: xgen-sandboxes
   defaultTimeout: 1h
   maxTimeout: 24h
-  warmPoolSize: 0
+  # Warm pool is on by default (1 pod per (template, capability-set)).
+  # Set to 0 to disable entirely. Per-template overrides via
+  # warmPoolSizes (e.g. "base:3,nodejs:2") apply across all capsets for
+  # that template.
+  warmPoolSize: 1
+  warmPoolSizes: ""
+  # Capabilities to pre-warm on top of the empty-caps baseline. With the
+  # default "sudo" the agent warms (base, nodejs, python) × (none, sudo)
+  # = 6 pools. Add "git-ssh" or "browser" only if the workload justifies
+  # the per-pod NetworkPolicy / 2Gi memory overhead.
+  warmPoolCapabilities: "sudo"
   resourceQuota:
     pods: "50"
     requestsCpu: "25"

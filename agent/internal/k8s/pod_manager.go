@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -21,12 +22,18 @@ import (
 )
 
 // PodInfo holds cached information about a sandbox pod.
+//
+// Template and Capabilities come from labels at watch-event time so the
+// agent onReady callback can compute the warm-pool key without a second
+// round trip to the K8s API.
 type PodInfo struct {
-	SandboxID string
-	PodName   string
-	PodIP     string
-	Phase     corev1.PodPhase
-	Ready     bool
+	SandboxID    string
+	PodName      string
+	PodIP        string
+	Phase        corev1.PodPhase
+	Ready        bool
+	Template     string
+	Capabilities []string
 }
 
 // PodManager handles K8s pod lifecycle for sandboxes.
@@ -125,11 +132,13 @@ func (pm *PodManager) watchPods(ctx context.Context) {
 				existing := pm.pods[sandboxID]
 				wasReady := existing != nil && existing.Ready
 				pm.pods[sandboxID] = &PodInfo{
-					SandboxID: sandboxID,
-					PodName:   pod.Name,
-					PodIP:     pod.Status.PodIP,
-					Phase:     pod.Status.Phase,
-					Ready:     ready,
+					SandboxID:    sandboxID,
+					PodName:      pod.Name,
+					PodIP:        pod.Status.PodIP,
+					Phase:        pod.Status.Phase,
+					Ready:        ready,
+					Template:     pod.Labels["xgen.io/template"],
+					Capabilities: capabilitiesFromLabels(pod.Labels),
 				}
 				pm.mu.Unlock()
 
@@ -181,6 +190,27 @@ func capSet(capabilities []string) map[string]bool {
 		s[c] = true
 	}
 	return s
+}
+
+// capabilitiesFromLabels extracts capability values from xgen.io/cap-*
+// labels in lexicographic order. Used by the watcher and by recovery so
+// a pod's capability set is always available without re-reading
+// annotations (which may be missing on legacy pods).
+func capabilitiesFromLabels(labels map[string]string) []string {
+	if len(labels) == 0 {
+		return nil
+	}
+	var out []string
+	for key := range labels {
+		if strings.HasPrefix(key, "xgen.io/cap-") {
+			out = append(out, strings.TrimPrefix(key, "xgen.io/cap-"))
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
+	return out
 }
 
 // CreatePod creates a new sandbox pod.
@@ -561,25 +591,23 @@ func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandb
 			continue
 		}
 
-		ready := isPodReady(&pod)
-		pm.pods[sandboxID] = &PodInfo{
-			SandboxID: sandboxID,
-			PodName:   pod.Name,
-			PodIP:     pod.Status.PodIP,
-			Phase:     pod.Status.Phase,
-			Ready:     ready,
-		}
-
 		ann := DecodeAnnotations(pod.Annotations)
 		// Capabilities fall back to label markers for pods created before
 		// the annotation scheme (labels have always been written).
 		capabilities := ann.Capabilities
 		if len(capabilities) == 0 {
-			for key := range pod.Labels {
-				if strings.HasPrefix(key, "xgen.io/cap-") {
-					capabilities = append(capabilities, strings.TrimPrefix(key, "xgen.io/cap-"))
-				}
-			}
+			capabilities = capabilitiesFromLabels(pod.Labels)
+		}
+
+		ready := isPodReady(&pod)
+		pm.pods[sandboxID] = &PodInfo{
+			SandboxID:    sandboxID,
+			PodName:      pod.Name,
+			PodIP:        pod.Status.PodIP,
+			Phase:        pod.Status.Phase,
+			Ready:        ready,
+			Template:     template,
+			Capabilities: capabilities,
 		}
 
 		recovered = append(recovered, RecoveredSandbox{

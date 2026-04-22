@@ -40,7 +40,7 @@ func newTestServer() (*Server, *auth.Authenticator) {
 	sandboxMgr := sandbox.NewManager()
 	client := fake.NewSimpleClientset()
 	podMgr := k8spkg.NewPodManagerWithClient(client, cfg.SandboxNamespace, cfg.SidecarImage, cfg.RuntimeBaseImage, corev1.PullNever, nil)
-	warmPool := k8spkg.NewWarmPool(podMgr, 0)
+	warmPool := k8spkg.NewWarmPool(podMgr, 0, nil, nil)
 	wsProxy := proxy.NewWSProxy(sandboxMgr)
 	router := proxy.NewRouter(cfg.PreviewDomain, sandboxMgr)
 	logger := slog.Default()

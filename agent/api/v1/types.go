@@ -106,11 +106,15 @@ type AdminWarmPoolResponse struct {
 	Pools []WarmPoolDetail `json:"pools"`
 }
 
-// WarmPoolDetail represents detailed warm pool state for a single template.
+// WarmPoolDetail represents detailed warm pool state for a single
+// (template, capability-set) pair. Capabilities was added when the warm
+// pool became capability-aware; omitted JSON for backwards compat when
+// the pool has no caps.
 type WarmPoolDetail struct {
-	Template  string `json:"template"`
-	Available int    `json:"available"`
-	Target    int    `json:"target"`
+	Template     string   `json:"template"`
+	Capabilities []string `json:"capabilities,omitempty"`
+	Available    int      `json:"available"`
+	Target       int      `json:"target"`
 }
 
 // AdminAuditLogsResponse is the response body for GET /api/v1/admin/audit-logs.
