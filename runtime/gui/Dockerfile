@@ -18,7 +18,8 @@ ENV DISPLAY=:99
 ENV VNC_RESOLUTION=1280x720
 
 COPY entrypoint-gui.sh /usr/local/bin/entrypoint-gui.sh
-RUN chmod +x /usr/local/bin/entrypoint-gui.sh
+RUN sed -i 's/\r$//' /usr/local/bin/entrypoint-gui.sh && \
+    chmod +x /usr/local/bin/entrypoint-gui.sh
 
 USER sandbox
 WORKDIR /home/sandbox/workspace
