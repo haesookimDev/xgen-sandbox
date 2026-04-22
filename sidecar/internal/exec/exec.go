@@ -1,3 +1,5 @@
+//go:build linux
+
 package exec
 
 import (
@@ -103,9 +105,17 @@ func (m *Manager) Start(opts StartOptions) (*Process, error) {
 		cmd.Env = append(cmd.Env, fmt.Sprintf("%s=%s", k, v))
 	}
 
+	// Drop to the runtime's sandbox user (UID/GID 1000) after chroot. The
+	// sidecar itself runs as root to perform the chroot, but user code must
+	// not. Requires CAP_SETUID/CAP_SETGID on the sidecar container.
 	cmd.SysProcAttr = &syscall.SysProcAttr{
 		Chroot:  runtimeRoot,
 		Setpgid: true,
+		Credential: &syscall.Credential{
+			Uid:         1000,
+			Gid:         1000,
+			NoSetGroups: true,
+		},
 	}
 
 	m.mu.Lock()

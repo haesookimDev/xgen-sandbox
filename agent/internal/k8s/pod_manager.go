@@ -287,7 +287,7 @@ func (pm *PodManager) CreatePod(
 				ReadOnlyRootFilesystem: boolPtr(true),
 				Capabilities: &corev1.Capabilities{
 					Drop: []corev1.Capability{"ALL"},
-					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN"},
+					Add:  []corev1.Capability{"SYS_CHROOT", "SYS_PTRACE", "SYS_ADMIN", "SETUID", "SETGID"},
 				},
 			},
 			ReadinessProbe: &corev1.Probe{

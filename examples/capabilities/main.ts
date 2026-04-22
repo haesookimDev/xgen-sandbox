@@ -42,7 +42,7 @@ async function testSudo() {
 
     const sudoWhoami = await sandbox.exec("sudo -n whoami");
     console.log(
-      `sudo -n whoami: ${sudoWhoami.stdout.trim()}  (expect: root, exit=${sudoWhoami.exitCode})`
+      `sudo -n whoami: stdout=${sudoWhoami.stdout.trim()} stderr=${sudoWhoami.stderr.trim()} exit=${sudoWhoami.exitCode}`
     );
     if (sudoWhoami.exitCode !== 0 || sudoWhoami.stdout.trim() !== "root") {
       throw new Error("sudo capability did not grant root");
