@@ -106,6 +106,7 @@ func (s *Server) apiHandler() http.Handler {
 
 	// Auth endpoint (no auth required)
 	r.Post("/api/v1/auth/token", s.handleAuthToken)
+	r.Post("/api/v2/auth/token", s.handleAuthTokenV2)
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
@@ -113,6 +114,7 @@ func (s *Server) apiHandler() http.Handler {
 		r.Use(s.auth.Middleware)
 		r.Use(auditLog(s.logger, s.auditStore))
 
+		// --- v1 (kept for backwards compatibility, pending deprecation) ---
 		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
 			Post("/api/v1/sandboxes", s.handleCreateSandbox)
 		r.With(auth.RequirePermission(auth.PermSandboxRead)).
@@ -130,8 +132,35 @@ func (s *Server) apiHandler() http.Handler {
 		r.With(auth.RequirePermission(auth.PermSandboxRead)).
 			Get("/api/v1/sandboxes/{id}/services", s.handleListServices)
 
-		// Admin-only routes
+		// --- v2 (preferred) ---
+		r.With(auth.RequirePermission(auth.PermSandboxCreate)).
+			Post("/api/v2/sandboxes", s.handleCreateSandboxV2)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v2/sandboxes", s.handleListSandboxesV2)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v2/sandboxes/{id}", s.handleGetSandboxV2)
+		r.With(auth.RequirePermission(auth.PermSandboxDelete)).
+			Delete("/api/v2/sandboxes/{id}", s.handleDeleteSandboxV2)
+		r.With(auth.RequirePermission(auth.PermSandboxWrite)).
+			Post("/api/v2/sandboxes/{id}/keepalive", s.handleKeepaliveV2)
+		r.With(auth.RequirePermission(auth.PermSandboxExec)).
+			Post("/api/v2/sandboxes/{id}/exec", s.handleExecV2)
+		r.With(auth.RequirePermission(auth.PermSandboxExec)).
+			Get("/api/v2/sandboxes/{id}/ws", s.handleWS)
+		r.With(auth.RequirePermission(auth.PermSandboxRead)).
+			Get("/api/v2/sandboxes/{id}/services", s.handleListServicesV2)
+
+		// Admin-only routes (v1 + v2 share the same handlers — admin
+		// shape is unchanged for MVP; structured errors come via
+		// writeAPIError anyway).
 		r.Route("/api/v1/admin", func(r chi.Router) {
+			r.Use(auth.RequireRole(auth.RoleAdmin))
+			r.Get("/summary", s.handleAdminSummary)
+			r.Get("/metrics", s.handleAdminMetrics)
+			r.Get("/audit-logs", s.handleAdminAuditLogs)
+			r.Get("/warm-pool", s.handleAdminWarmPool)
+		})
+		r.Route("/api/v2/admin", func(r chi.Router) {
 			r.Use(auth.RequireRole(auth.RoleAdmin))
 			r.Get("/summary", s.handleAdminSummary)
 			r.Get("/metrics", s.handleAdminMetrics)
@@ -256,42 +285,15 @@ func (s *Server) handleCreateSandbox(w http.ResponseWriter, r *http.Request) {
 	SandboxesByTemplate.WithLabelValues(req.Template).Inc()
 	SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Inc()
 
-	// Try warm pool first (only for vanilla sandboxes without capabilities),
-	// fall back to creating a new pod
-	podCreateStart := time.Now()
-	if len(req.Capabilities) == 0 {
-		if warmID := s.warmPool.Claim(req.Template); warmID != "" {
-			WarmPoolClaimsTotal.Inc()
-			WarmPoolAvailable.WithLabelValues(req.Template).Dec()
-			if info, ok := s.podMgr.GetPodInfo(warmID); ok {
-				s.podMgr.RemapPod(warmID, sbx.ID)
-				s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
-				s.sandboxMgr.SetStatus(sbx.ID, "running")
-				SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
-				log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
-				go s.warmPool.Replenish(context.Background(), req.Template)
-				goto buildResponse
-			}
-		}
+	var rs *k8spkg.ResourceSpec
+	if req.Resources != nil {
+		rs = &k8spkg.ResourceSpec{CPU: req.Resources.CPU, Memory: req.Resources.Memory}
 	}
-	{
-		var rs *k8spkg.ResourceSpec
-		if req.Resources != nil {
-			rs = &k8spkg.ResourceSpec{CPU: req.Resources.CPU, Memory: req.Resources.Memory}
-		}
-		if err := s.podMgr.CreatePod(r.Context(), sbx.ID, req.Template, req.Env, req.Ports, req.GUI, req.Capabilities, rs); err != nil {
-			s.sandboxMgr.Remove(sbx.ID)
-			sandboxesActive.Dec()
-			SandboxesByTemplate.WithLabelValues(req.Template).Dec()
-			SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Dec()
-			log.Printf("create pod error: %v", err)
-			writeAPIError(w, r, v2.CodePodCreateFailed, "failed to create sandbox",
-				map[string]any{"reason": err.Error(), "template": req.Template})
-			return
-		}
-		SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
+	if _, err := s.provisionSandboxPod(r.Context(), sbx, req.Env, req.Ports, req.GUI, req.Capabilities, rs); err != nil {
+		writeAPIError(w, r, v2.CodePodCreateFailed, "failed to create sandbox",
+			map[string]any{"reason": err.Error(), "template": req.Template})
+		return
 	}
-buildResponse:
 
 	// Build preview URLs
 	previewURLs := make(map[int]string)
@@ -316,6 +318,51 @@ buildResponse:
 	}
 
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+// provisionSandboxPod claims a warm pod when possible, otherwise creates a
+// fresh pod. On failure it rolls back the sandbox registration and the
+// associated metrics so the caller only has to translate the error.
+//
+// Returns fromWarmPool=true when the sandbox was served from the warm pool.
+func (s *Server) provisionSandboxPod(
+	ctx context.Context,
+	sbx *sandbox.Sandbox,
+	env map[string]string,
+	ports []int,
+	gui bool,
+	capabilities []string,
+	resources *k8spkg.ResourceSpec,
+) (bool, error) {
+	template := sbx.Template
+	podCreateStart := time.Now()
+
+	if len(capabilities) == 0 {
+		if warmID := s.warmPool.Claim(template); warmID != "" {
+			WarmPoolClaimsTotal.Inc()
+			WarmPoolAvailable.WithLabelValues(template).Dec()
+			if info, ok := s.podMgr.GetPodInfo(warmID); ok {
+				s.podMgr.RemapPod(warmID, sbx.ID)
+				s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
+				s.sandboxMgr.SetStatus(sbx.ID, v1.StatusRunning)
+				SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
+				log.Printf("claimed warm pod %s -> sandbox %s", warmID, sbx.ID)
+				go s.warmPool.Replenish(context.Background(), template)
+				return true, nil
+			}
+		}
+	}
+
+	if err := s.podMgr.CreatePod(ctx, sbx.ID, template, env, ports, gui, capabilities, resources); err != nil {
+		s.sandboxMgr.Remove(sbx.ID)
+		sandboxesActive.Dec()
+		SandboxesByTemplate.WithLabelValues(template).Dec()
+		SandboxesByStatus.WithLabelValues(string(v1.StatusStarting)).Dec()
+		log.Printf("create pod error: %v", err)
+		return false, err
+	}
+	SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
+	return false, nil
 }
 
 func (s *Server) handleListSandboxes(w http.ResponseWriter, r *http.Request) {
