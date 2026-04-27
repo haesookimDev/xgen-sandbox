@@ -242,9 +242,10 @@ export class Sandbox {
       cwd: options?.cwd,
     });
 
+    const terminal = new Terminal(ws, channel);
     ws.send({ type: MsgType.ExecStart, channel, id: 0, payload });
 
-    return new Terminal(ws, channel);
+    return terminal;
   }
 
   // --- Filesystem ---
@@ -422,12 +423,23 @@ export class Sandbox {
 export class Terminal {
   private ws: WsTransport;
   private channel: number;
+  private processId = 0;
   private dataHandlers: ((data: string) => void)[] = [];
   private cleanup: (() => void) | null = null;
+  private ackCleanup: (() => void) | null = null;
 
   constructor(ws: WsTransport, channel: number) {
     this.ws = ws;
     this.channel = channel;
+
+    this.ackCleanup = ws.on(MsgType.Ack, (env) => {
+      if (env.channel === this.channel) {
+        const ack = decodePayload<{ process_id?: number; processId?: number }>(
+          env.payload
+        );
+        this.processId = ack.process_id ?? ack.processId ?? this.processId;
+      }
+    });
 
     this.cleanup = ws.on(MsgType.ExecStdout, (env) => {
       if (env.channel === this.channel) {
@@ -442,8 +454,8 @@ export class Terminal {
   /** Send data to the terminal's stdin. */
   write(data: string): void {
     const bytes = new TextEncoder().encode(data);
-    // Prepend process ID (4 bytes, 0 for now since channel tracks it)
     const payload = new Uint8Array(4 + bytes.length);
+    new DataView(payload.buffer).setUint32(0, this.processId, false);
     payload.set(bytes, 4);
     this.ws.send({
       type: MsgType.ExecStdin,
@@ -475,6 +487,7 @@ export class Terminal {
    */
   resize(cols: number, rows: number): void {
     const payload = encodePayload({
+      process_id: this.processId,
       cols,
       rows,
     });
@@ -491,6 +504,10 @@ export class Terminal {
     if (this.cleanup) {
       this.cleanup();
       this.cleanup = null;
+    }
+    if (this.ackCleanup) {
+      this.ackCleanup();
+      this.ackCleanup = null;
     }
     this.dataHandlers = [];
   }

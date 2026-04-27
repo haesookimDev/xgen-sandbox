@@ -133,11 +133,7 @@ func (s *Sandbox) ExecStream(ctx context.Context, command string, opts ...ExecOp
 	}))
 	cleanups = append(cleanups, ws.On(protocol.ExecExit, func(env protocol.Envelope) {
 		if env.Channel == channel {
-			var exit struct {
-				ExitCode int `msgpack:"exitCode"`
-			}
-			_ = protocol.DecodePayload(env.Payload, &exit)
-			ch <- ExecEvent{Type: "exit", ExitCode: exit.ExitCode}
+			ch <- ExecEvent{Type: "exit", ExitCode: decodeExecExitCode(env.Payload)}
 			for _, c := range cleanups {
 				c()
 			}
@@ -166,11 +162,27 @@ func (s *Sandbox) ExecStream(ctx context.Context, command string, opts ...ExecOp
 	return ch, nil
 }
 
+func decodeExecExitCode(payload []byte) int {
+	var exit map[string]int
+	if err := protocol.DecodePayload(payload, &exit); err != nil {
+		return -1
+	}
+	if exitCode, ok := exit["exit_code"]; ok {
+		return exitCode
+	}
+	if exitCode, ok := exit["exitCode"]; ok {
+		return exitCode
+	}
+	return -1
+}
+
 // Terminal represents an interactive terminal session.
 type Terminal struct {
-	ws       *transport.WSTransport
-	channel  uint32
-	cleanups []func()
+	ws        *transport.WSTransport
+	channel   uint32
+	processID uint32
+	mu        sync.RWMutex
+	cleanups  []func()
 }
 
 // OpenTerminal opens an interactive terminal session.
@@ -191,6 +203,31 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts *TerminalOptions) (*Ter
 	}
 
 	channel := uint32(time.Now().UnixNano() & 0xFFFFFFFF)
+	term := &Terminal{ws: ws, channel: channel}
+
+	ackCleanup := ws.On(protocol.Ack, func(env protocol.Envelope) {
+		if env.Channel != channel {
+			return
+		}
+		var ack struct {
+			ProcessID       uint32 `msgpack:"process_id"`
+			ProcessIDCompat uint32 `msgpack:"processId"`
+		}
+		if err := protocol.DecodePayload(env.Payload, &ack); err != nil {
+			return
+		}
+		processID := ack.ProcessID
+		if processID == 0 {
+			processID = ack.ProcessIDCompat
+		}
+		if processID == 0 {
+			return
+		}
+		term.mu.Lock()
+		term.processID = processID
+		term.mu.Unlock()
+	})
+	term.cleanups = append(term.cleanups, ackCleanup)
 
 	payload, err := protocol.EncodePayload(map[string]any{
 		"command": "/bin/bash",
@@ -202,23 +239,28 @@ func (s *Sandbox) OpenTerminal(ctx context.Context, opts *TerminalOptions) (*Ter
 		"rows":    opts.Rows,
 	})
 	if err != nil {
+		ackCleanup()
 		return nil, err
 	}
 
 	if err := ws.Send(ctx, protocol.Envelope{
 		Type: protocol.ExecStart, Channel: channel, ID: 0, Payload: payload,
 	}); err != nil {
+		ackCleanup()
 		return nil, err
 	}
 
-	return &Terminal{ws: ws, channel: channel}, nil
+	return term, nil
 }
 
 // Write sends data to terminal stdin.
 func (t *Terminal) Write(data string) error {
 	textBytes := []byte(data)
 	payload := make([]byte, 4+len(textBytes))
-	binary.BigEndian.PutUint32(payload[:4], 0) // process ID placeholder
+	t.mu.RLock()
+	processID := t.processID
+	t.mu.RUnlock()
+	binary.BigEndian.PutUint32(payload[:4], processID)
 	copy(payload[4:], textBytes)
 
 	return t.ws.Send(context.Background(), protocol.Envelope{
@@ -240,7 +282,10 @@ func (t *Terminal) OnData(callback func(data string)) CancelFunc {
 
 // Resize changes the terminal dimensions.
 func (t *Terminal) Resize(cols, rows int) error {
-	payload, err := protocol.EncodePayload(map[string]any{"cols": cols, "rows": rows})
+	t.mu.RLock()
+	processID := t.processID
+	t.mu.RUnlock()
+	payload, err := protocol.EncodePayload(map[string]any{"process_id": processID, "cols": cols, "rows": rows})
 	if err != nil {
 		return err
 	}

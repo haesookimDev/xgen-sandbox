@@ -137,7 +137,8 @@ class Sandbox:
         def on_exit(env: Envelope) -> None:
             if env.channel == channel:
                 data = decode_payload(env.payload)
-                queue.put_nowait(ExecEvent(type="exit", exit_code=data.get("exitCode", -1)))
+                exit_code = data.get("exit_code", data.get("exitCode", -1))
+                queue.put_nowait(ExecEvent(type="exit", exit_code=exit_code))
                 queue.put_nowait(None)  # sentinel
 
         def on_error(env: Envelope) -> None:
@@ -192,11 +193,12 @@ class Sandbox:
             "cols": cols,
             "rows": rows,
         })
+        terminal = Terminal(ws, channel)
         await ws.send_async(Envelope(
             type=MsgType.ExecStart, channel=channel, id=0, payload=payload,
         ))
 
-        return Terminal(ws, channel)
+        return terminal
 
     # -- Filesystem (WebSocket) --
 
@@ -385,12 +387,20 @@ class Terminal:
     def __init__(self, ws: WsTransport, channel: int) -> None:
         self._ws = ws
         self._channel = channel
+        self._process_id = 0
         self._cleanups: list[Callable[[], None]] = []
+
+        def on_ack(env: Envelope) -> None:
+            if env.channel == self._channel:
+                data = decode_payload(env.payload)
+                self._process_id = data.get("process_id", data.get("processId", self._process_id))
+
+        self._cleanups.append(self._ws.on(MsgType.Ack, on_ack))
 
     def write(self, data: str) -> None:
         """Send data to terminal stdin."""
         text_bytes = data.encode("utf-8")
-        payload = struct.pack(">I", 0) + text_bytes
+        payload = struct.pack(">I", self._process_id) + text_bytes
         self._ws.send(Envelope(
             type=MsgType.ExecStdin, channel=self._channel, id=0, payload=payload,
         ))
@@ -409,7 +419,7 @@ class Terminal:
 
     def resize(self, cols: int, rows: int) -> None:
         """Resize the terminal."""
-        payload = encode_payload({"cols": cols, "rows": rows})
+        payload = encode_payload({"process_id": self._process_id, "cols": cols, "rows": rows})
         self._ws.send(Envelope(
             type=MsgType.ExecResize, channel=self._channel, id=0, payload=payload,
         ))

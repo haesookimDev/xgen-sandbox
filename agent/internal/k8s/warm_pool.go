@@ -20,12 +20,12 @@ import (
 // "base/". This is a correctness requirement because capabilities affect
 // the runtime image, securityContext, and NetworkPolicy layout.
 type WarmPool struct {
-	podMgr   *PodManager
-	mu       sync.Mutex
-	pool     map[string][]string // poolKey -> list of warm sandboxIDs
-	size     int                 // default target pool size
-	sizes    map[string]int      // template-level size override (applies to all capsets for that template)
-	specs    []poolSpec          // pre-warm specs
+	podMgr *PodManager
+	mu     sync.Mutex
+	pool   map[string][]string // poolKey -> list of warm sandboxIDs
+	size   int                 // default target pool size
+	sizes  map[string]int      // template-level size override (applies to all capsets for that template)
+	specs  []poolSpec          // pre-warm specs
 }
 
 // poolSpec is a (template, capabilities) pair that defines a distinct
@@ -248,11 +248,12 @@ func (wp *WarmPool) fill(ctx context.Context, spec poolSpec) {
 
 	for i := 0; i < needed; i++ {
 		id := fmt.Sprintf("warm-%s", uuid.New().String()[:8])
+		gui := spec.Template == "gui" || capSet(spec.Capabilities)["browser"]
 		// Warm pre-warms carry no persistent state — they take on
 		// metadata and expiry only when claimed (see handleCreateSandbox).
 		if err := wp.podMgr.CreatePod(
 			ctx, id, spec.Template,
-			nil, nil, false, spec.DisplayCapabilities(),
+			nil, nil, gui, spec.DisplayCapabilities(),
 			nil, time.Time{}, time.Time{},
 		); err != nil {
 			log.Printf("warm pool: failed to create pod for %s: %v", key, err)

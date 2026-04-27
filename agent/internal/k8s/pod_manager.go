@@ -38,11 +38,11 @@ type PodInfo struct {
 
 // PodManager handles K8s pod lifecycle for sandboxes.
 type PodManager struct {
-	client      kubernetes.Interface
-	namespace   string
-	sidecar     string
-	runtime     string
-	pullPolicy  corev1.PullPolicy
+	client     kubernetes.Interface
+	namespace  string
+	sidecar    string
+	runtime    string
+	pullPolicy corev1.PullPolicy
 
 	mu   sync.RWMutex
 	pods map[string]*PodInfo // sandboxID -> PodInfo
@@ -356,8 +356,11 @@ func (pm *PodManager) CreatePod(
 	// Build pod labels including capability markers
 	labels := map[string]string{
 		"app.kubernetes.io/name": "xgen-sandbox",
-		"xgen.io/sandbox-id":    sandboxID,
-		"xgen.io/template":      template,
+		"xgen.io/sandbox-id":     sandboxID,
+		"xgen.io/template":       template,
+	}
+	if strings.HasPrefix(sandboxID, "warm-") {
+		labels["xgen.io/warm-pool"] = "true"
 	}
 	for _, c := range capabilities {
 		labels["xgen.io/cap-"+c] = "true"
@@ -493,7 +496,7 @@ func (pm *PodManager) deleteCapabilityNetworkPolicies(ctx context.Context, sandb
 func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
 
-	podName := "sbx-" + sandboxID
+	podName := pm.podNameForSandbox(ctx, sandboxID)
 	gracePeriod := int64(10)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
 		GracePeriodSeconds: &gracePeriod,
@@ -513,7 +516,7 @@ func (pm *PodManager) DeletePod(ctx context.Context, sandboxID string) error {
 func (pm *PodManager) ForceDeletePod(ctx context.Context, sandboxID string) error {
 	pm.deleteCapabilityNetworkPolicies(ctx, sandboxID)
 
-	podName := "sbx-" + sandboxID
+	podName := pm.podNameForSandbox(ctx, sandboxID)
 	zero := int64(0)
 	err := pm.client.CoreV1().Pods(pm.namespace).Delete(ctx, podName, metav1.DeleteOptions{
 		GracePeriodSeconds: &zero,
@@ -546,6 +549,131 @@ func (pm *PodManager) RemapPod(oldID, newID string) {
 		pm.pods[newID] = info
 		delete(pm.pods, oldID)
 	}
+}
+
+// ClaimWarmPod converts a ready warm-pool pod into a real sandbox pod.
+//
+// Kubernetes pod names are immutable, so the pod may keep a name like
+// "sbx-warm-abc123" after being claimed. All lookup-sensitive state is
+// moved to labels/annotations and the PodInfo.PodName cache entry is
+// preserved so delete/force-delete can target the real pod name later.
+func (pm *PodManager) ClaimWarmPod(
+	ctx context.Context,
+	warmID, sandboxID, template string,
+	env map[string]string,
+	ports []int,
+	gui bool,
+	capabilities []string,
+	metadata map[string]string,
+	createdAt, expiresAt time.Time,
+) (*PodInfo, error) {
+	pm.mu.RLock()
+	info, ok := pm.pods[warmID]
+	pm.mu.RUnlock()
+	podName := "sbx-" + warmID
+	if ok && info.PodName != "" {
+		podName = info.PodName
+	}
+
+	pod, err := pm.client.CoreV1().Pods(pm.namespace).Get(ctx, podName, metav1.GetOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("get warm pod: %w", err)
+	}
+
+	if pod.Labels["xgen.io/template"] != "" && pod.Labels["xgen.io/template"] != template {
+		return nil, fmt.Errorf("warm pod template mismatch: pod=%s request=%s", pod.Labels["xgen.io/template"], template)
+	}
+
+	annotations, err := SandboxAnnotations{
+		Metadata:     metadata,
+		Env:          env,
+		Ports:        ports,
+		GUI:          gui,
+		Capabilities: capabilities,
+		CreatedAt:    createdAt,
+		ExpiresAt:    expiresAt,
+	}.Encode()
+	if err != nil {
+		return nil, fmt.Errorf("encode sandbox annotations: %w", err)
+	}
+
+	updated := pod.DeepCopy()
+	updated.Labels = copyStringMap(updated.Labels)
+	updated.Annotations = copyStringMap(annotations)
+	updated.Labels["xgen.io/sandbox-id"] = sandboxID
+	updated.Labels["xgen.io/template"] = template
+	delete(updated.Labels, "xgen.io/warm-pool")
+	for k := range updated.Labels {
+		if strings.HasPrefix(k, "xgen.io/cap-") {
+			delete(updated.Labels, k)
+		}
+	}
+	for _, c := range capabilities {
+		updated.Labels["xgen.io/cap-"+c] = "true"
+	}
+
+	updatedPod, err := pm.client.CoreV1().Pods(pm.namespace).Update(ctx, updated, metav1.UpdateOptions{})
+	if err != nil {
+		return nil, fmt.Errorf("claim warm pod update: %w", err)
+	}
+
+	pm.deleteCapabilityNetworkPolicies(ctx, warmID)
+	if capSet(capabilities)["git-ssh"] {
+		if err := pm.createGitSSHNetworkPolicy(ctx, sandboxID); err != nil {
+			log.Printf("warning: failed to create git-ssh network policy for claimed warm pod %s: %v", sandboxID, err)
+		}
+	}
+
+	claimed := &PodInfo{
+		SandboxID:    sandboxID,
+		PodName:      updatedPod.Name,
+		PodIP:        updatedPod.Status.PodIP,
+		Phase:        updatedPod.Status.Phase,
+		Ready:        isPodReady(updatedPod),
+		Template:     template,
+		Capabilities: capabilitiesFromLabels(updatedPod.Labels),
+	}
+	if claimed.PodIP == "" && ok {
+		claimed.PodIP = info.PodIP
+	}
+	if claimed.Phase == "" && ok {
+		claimed.Phase = info.Phase
+	}
+	if !claimed.Ready && ok {
+		claimed.Ready = info.Ready
+	}
+
+	pm.mu.Lock()
+	delete(pm.pods, warmID)
+	pm.pods[sandboxID] = claimed
+	pm.mu.Unlock()
+
+	return claimed, nil
+}
+
+func (pm *PodManager) podNameForSandbox(ctx context.Context, sandboxID string) string {
+	pm.mu.RLock()
+	if info, ok := pm.pods[sandboxID]; ok && info.PodName != "" {
+		pm.mu.RUnlock()
+		return info.PodName
+	}
+	pm.mu.RUnlock()
+
+	pods, err := pm.client.CoreV1().Pods(pm.namespace).List(ctx, metav1.ListOptions{
+		LabelSelector: "xgen.io/sandbox-id=" + sandboxID,
+	})
+	if err == nil && len(pods.Items) > 0 {
+		return pods.Items[0].Name
+	}
+	return "sbx-" + sandboxID
+}
+
+func copyStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 // RecoveredSandbox holds state recovered from an existing K8s pod.
@@ -591,7 +719,7 @@ func (pm *PodManager) RecoverExistingPods(ctx context.Context) ([]RecoveredSandb
 	for _, pod := range pods.Items {
 		sandboxID := pod.Labels["xgen.io/sandbox-id"]
 		template := pod.Labels["xgen.io/template"]
-		if sandboxID == "" || strings.HasPrefix(sandboxID, "warm-") {
+		if sandboxID == "" || strings.HasPrefix(sandboxID, "warm-") || pod.Labels["xgen.io/warm-pool"] == "true" {
 			continue
 		}
 
@@ -768,7 +896,7 @@ func runtimeResources(specs ...*ResourceSpec) corev1.ResourceRequirements {
 	}
 }
 
-func boolPtr(b bool) *bool { return &b }
+func boolPtr(b bool) *bool                               { return &b }
 func resourcePtr(r resource.Quantity) *resource.Quantity { return &r }
 
 // intstr9001 returns an IntOrString for port 9001.

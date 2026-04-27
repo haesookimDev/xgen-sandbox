@@ -190,6 +190,84 @@ func TestRemapPod(t *testing.T) {
 	}
 }
 
+func TestClaimWarmPod_PatchesStateAndDeleteUsesOriginalPodName(t *testing.T) {
+	pm := newTestPodManager()
+	ctx := context.Background()
+
+	if err := pm.CreatePod(ctx, "warm-abc", "nodejs", nil, nil, false, []string{"sudo"}, nil, time.Time{}, time.Time{}); err != nil {
+		t.Fatalf("CreatePod(warm) error: %v", err)
+	}
+
+	pm.mu.Lock()
+	pm.pods["warm-abc"] = &PodInfo{
+		SandboxID:    "warm-abc",
+		PodName:      "sbx-warm-abc",
+		PodIP:        "10.0.0.2",
+		Phase:        corev1.PodRunning,
+		Ready:        true,
+		Template:     "nodejs",
+		Capabilities: []string{"sudo"},
+	}
+	pm.mu.Unlock()
+
+	createdAt := time.Now().Add(-time.Minute)
+	expiresAt := time.Now().Add(time.Hour)
+	info, err := pm.ClaimWarmPod(
+		ctx,
+		"warm-abc",
+		"real-id",
+		"nodejs",
+		map[string]string{"FOO": "bar"},
+		[]int{3000},
+		false,
+		[]string{"sudo"},
+		map[string]string{"owner": "llm"},
+		createdAt,
+		expiresAt,
+	)
+	if err != nil {
+		t.Fatalf("ClaimWarmPod() error: %v", err)
+	}
+	if info.SandboxID != "real-id" {
+		t.Fatalf("SandboxID: expected real-id, got %q", info.SandboxID)
+	}
+	if info.PodName != "sbx-warm-abc" {
+		t.Fatalf("PodName: expected original pod name, got %q", info.PodName)
+	}
+
+	pod, err := pm.client.CoreV1().Pods("test-ns").Get(ctx, "sbx-warm-abc", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pod.Labels["xgen.io/sandbox-id"] != "real-id" {
+		t.Fatalf("pod sandbox-id label: expected real-id, got %q", pod.Labels["xgen.io/sandbox-id"])
+	}
+	if _, ok := pod.Labels["xgen.io/warm-pool"]; ok {
+		t.Fatal("claimed pod should not retain warm-pool label")
+	}
+	if pod.Annotations[AnnotationPorts] != "3000" {
+		t.Fatalf("ports annotation: expected 3000, got %q", pod.Annotations[AnnotationPorts])
+	}
+
+	if _, ok := pm.GetPodInfo("warm-abc"); ok {
+		t.Fatal("warm cache entry should be removed")
+	}
+	if _, ok := pm.GetPodInfo("real-id"); !ok {
+		t.Fatal("claimed sandbox cache entry should exist")
+	}
+
+	if err := pm.DeletePod(ctx, "real-id"); err != nil {
+		t.Fatalf("DeletePod(claimed) error: %v", err)
+	}
+	pods, err := pm.client.CoreV1().Pods("test-ns").List(ctx, metav1.ListOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pods.Items) != 0 {
+		t.Fatalf("expected claimed warm pod to be deleted, got %d pod(s)", len(pods.Items))
+	}
+}
+
 func TestListPods(t *testing.T) {
 	pm := newTestPodManager()
 

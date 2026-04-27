@@ -345,18 +345,33 @@ func (s *Server) provisionSandboxPod(
 	// matches only the "template/sudo" pool. The previous len(caps)==0
 	// gate prevented sudo sandboxes from benefiting at all.
 	poolKey := k8spkg.PoolKeyFor(template, capabilities)
-	if warmID := s.warmPool.Claim(template, capabilities); warmID != "" {
-		WarmPoolClaimsTotal.Inc()
-		WarmPoolAvailable.WithLabelValues(poolKey).Dec()
-		if info, ok := s.podMgr.GetPodInfo(warmID); ok {
-			s.podMgr.RemapPod(warmID, sbx.ID)
-			s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
-			s.sandboxMgr.SetStatus(sbx.ID, v1.StatusRunning)
-			SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
-			log.Printf("claimed warm pod %s -> sandbox %s (pool=%s)", warmID, sbx.ID, poolKey)
-			go s.warmPool.Replenish(context.Background(), template, capabilities)
-			return true, nil
+	canUseWarmPool := !gui || template == "gui" || containsString(capabilities, "browser")
+	if canUseWarmPool {
+		if warmID := s.warmPool.Claim(template, capabilities); warmID != "" {
+			WarmPoolAvailable.WithLabelValues(poolKey).Dec()
+			info, err := s.podMgr.ClaimWarmPod(
+				ctx, warmID, sbx.ID, template,
+				env, ports, gui, capabilities,
+				sbx.Metadata, sbx.CreatedAt, sbx.ExpiresAt,
+			)
+			if err != nil {
+				log.Printf("claim warm pod %s for sandbox %s failed: %v", warmID, sbx.ID, err)
+				if delErr := s.podMgr.ForceDeletePod(context.Background(), warmID); delErr != nil {
+					log.Printf("delete failed warm pod %s: %v", warmID, delErr)
+				}
+				go s.warmPool.Replenish(context.Background(), template, capabilities)
+			} else {
+				WarmPoolClaimsTotal.Inc()
+				s.sandboxMgr.SetPodIP(sbx.ID, info.PodIP)
+				s.sandboxMgr.SetStatus(sbx.ID, v1.StatusRunning)
+				SandboxPodCreateDuration.Observe(time.Since(podCreateStart).Seconds())
+				log.Printf("claimed warm pod %s -> sandbox %s (pool=%s)", warmID, sbx.ID, poolKey)
+				go s.warmPool.Replenish(context.Background(), template, capabilities)
+				return true, nil
+			}
 		}
+	} else {
+		log.Printf("warm pool skipped for sandbox %s: gui request requires matching gui/browser warm pod", sbx.ID)
 	}
 
 	if err := s.podMgr.CreatePod(ctx, sbx.ID, template, env, ports, gui, capabilities, sbx.Metadata, sbx.CreatedAt, sbx.ExpiresAt, resources); err != nil {
