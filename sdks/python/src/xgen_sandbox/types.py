@@ -28,10 +28,16 @@ class SandboxInfo:
     """ISO 8601 timestamp of when the sandbox was created."""
     expires_at: str = ""
     """ISO 8601 timestamp of when the sandbox will expire."""
+    created_at_ms: int | None = None
+    """Unix epoch milliseconds when the sandbox was created. Preferred for API v2."""
+    expires_at_ms: int | None = None
+    """Unix epoch milliseconds when the sandbox will expire. Preferred for API v2."""
     metadata: dict[str, str] | None = None
     """User-defined metadata."""
     capabilities: list[str] | None = None
     """Active runtime capabilities for this sandbox."""
+    from_warm_pool: bool | None = None
+    """True when this sandbox was claimed from the warm pool. API v2 only."""
 
 
 @dataclass
@@ -42,6 +48,8 @@ class CreateSandboxOptions:
     """Runtime template (e.g. ``"base"``, ``"nodejs"``, ``"python"``, ``"gui"``)."""
     timeout_seconds: int | None = None
     """Sandbox timeout in seconds. Automatically destroyed after this duration."""
+    timeout_ms: int | None = None
+    """Sandbox timeout in milliseconds. Preferred for API v2."""
     env: dict[str, str] | None = None
     """Environment variables injected into the sandbox runtime."""
     ports: list[int] | None = None
@@ -78,6 +86,19 @@ class ExecResult:
     """Captured standard output."""
     stderr: str
     """Captured standard error."""
+
+
+@dataclass
+class StructuredError:
+    """Stable machine-readable error returned by API v2."""
+
+    code: str
+    message: str
+    retryable: bool
+    details: dict | None = None
+    request_id: str | None = None
+    sandbox_id: str | None = None
+    command_id: str | None = None
 
 
 @dataclass

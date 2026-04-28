@@ -10,7 +10,9 @@ from .types import (
     FileInfo,
     FileEvent,
     Disposable,
+    StructuredError,
 )
+from .transport.http import XgenApiError
 
 __all__ = [
     "XgenClient",
@@ -25,4 +27,6 @@ __all__ = [
     "FileInfo",
     "FileEvent",
     "Disposable",
+    "StructuredError",
+    "XgenApiError",
 ]

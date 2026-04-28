@@ -7,6 +7,8 @@ export interface CreateSandboxOptions {
   template?: string;
   /** Sandbox timeout in seconds. The sandbox is automatically destroyed after this duration. */
   timeoutSeconds?: number;
+  /** Sandbox timeout in milliseconds. Preferred for API v2. */
+  timeoutMs?: number;
   /** Resource limits for the sandbox container. */
   resources?: {
     cpu?: string;
@@ -43,10 +45,27 @@ export interface SandboxInfo {
   createdAt: string;
   /** ISO 8601 timestamp of when the sandbox will expire. */
   expiresAt: string;
+  /** Unix epoch milliseconds when the sandbox was created. Preferred for API v2. */
+  createdAtMs?: number;
+  /** Unix epoch milliseconds when the sandbox will expire. Preferred for API v2. */
+  expiresAtMs?: number;
   /** User-defined metadata. */
   metadata?: Record<string, string>;
   /** Active runtime capabilities for this sandbox. */
   capabilities?: string[];
+  /** True when this sandbox was claimed from the warm pool. API v2 only. */
+  fromWarmPool?: boolean;
+}
+
+/** Stable machine-readable error returned by API v2. */
+export interface StructuredError {
+  code: string;
+  message: string;
+  retryable: boolean;
+  details?: Record<string, unknown>;
+  requestId?: string;
+  sandboxId?: string;
+  commandId?: string;
 }
 
 /** Options for command execution. */
@@ -125,4 +144,6 @@ export interface XgenClientOptions {
   apiKey: string;
   /** Base URL of the xgen-sandbox agent (e.g. "http://localhost:8080"). */
   agentUrl: string;
+  /** HTTP API version. Defaults to "v2"; set "v1" for legacy compatibility. */
+  apiVersion?: "v1" | "v2";
 }

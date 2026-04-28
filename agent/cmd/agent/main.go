@@ -57,13 +57,6 @@ func main() {
 			if warmPool != nil && strings.HasPrefix(sandboxID, "warm-") {
 				// Warm pod became ready, add to pool
 				if info, ok := podMgr.GetPodInfo(sandboxID); ok {
-					// Connect sidecar WS for warm pod
-					ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-					defer cancel()
-					if err := wsProxy.ConnectToSidecar(ctx, sandboxID, info.PodIP); err != nil {
-						log.Printf("warm pool: connect to sidecar %s: %v", sandboxID, err)
-						return
-					}
 					// Use the pod's own template + capability labels to
 					// compute the pool key. The previous hardcoded "base"
 					// caused every warm pod (nodejs, python, sudo variants)
@@ -81,11 +74,6 @@ func main() {
 
 			if info, ok := podMgr.GetPodInfo(sandboxID); ok {
 				sandboxMgr.SetPodIP(sandboxID, info.PodIP)
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				defer cancel()
-				if err := wsProxy.ConnectToSidecar(ctx, sandboxID, info.PodIP); err != nil {
-					log.Printf("connect to sidecar %s: %v", sandboxID, err)
-				}
 			}
 		},
 	)
@@ -119,13 +107,6 @@ func main() {
 				rs.Capabilities, rs.CreatedAt, expiresAt,
 				rs.Ready,
 			)
-			if rs.Ready && rs.PodIP != "" {
-				rctx, rcancel := context.WithTimeout(ctx, 10*time.Second)
-				if err := wsProxy.ConnectToSidecar(rctx, rs.SandboxID, rs.PodIP); err != nil {
-					log.Printf("recover: connect to sidecar %s: %v", rs.SandboxID, err)
-				}
-				rcancel()
-			}
 		}
 		log.Printf("recovered %d sandbox(es) from existing pods", len(recovered))
 	}
@@ -160,7 +141,6 @@ func main() {
 						log.Printf("delete expired pod %s: %v", id, err)
 						pendingDeletes[id] = time.Now()
 					}
-					wsProxy.DisconnectSidecar(id)
 					sandboxMgr.Remove(id)
 				}
 			}

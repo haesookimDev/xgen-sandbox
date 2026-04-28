@@ -53,7 +53,7 @@
   - 검증:
     - fake K8s client 테스트로 claim 후 label/annotation/cache/delete가 일관적인지 확인한다.
 
-- [ ] P0-05 Agent-side stale sidecar connection을 정리한다.
+- [x] P0-05 Agent-side stale sidecar connection을 정리한다.
   - 문제: ready 시 장기 sidecar WS를 열지만 REST exec/client WS는 임시 connection을 사용해 장기 connection이 거의 쓰이지 않는다.
   - 작업:
     - 사용하지 않는 `ConnectToSidecar` 장기 connection을 제거하거나 health/read pump 용도로 명확히 바꾼다.

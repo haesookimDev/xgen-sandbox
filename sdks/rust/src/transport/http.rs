@@ -9,6 +9,7 @@ use crate::types::{
 
 pub struct HttpTransport {
     base_url: String,
+    api_version: String,
     api_key: String,
     client: Client,
     token: Mutex<Option<TokenState>>,
@@ -21,13 +22,26 @@ struct TokenState {
 
 impl HttpTransport {
     pub fn new(agent_url: &str, api_key: &str) -> Self {
+        Self::new_with_version(agent_url, api_key, "v2")
+    }
+
+    pub fn new_with_version(agent_url: &str, api_key: &str, api_version: &str) -> Self {
         let base_url = agent_url.trim_end_matches('/').to_string();
+        let api_version = match api_version {
+            "v1" | "v2" => api_version,
+            _ => "v2",
+        };
         Self {
             base_url,
+            api_version: api_version.to_string(),
             api_key: api_key.to_string(),
             client: Client::new(),
             token: Mutex::new(None),
         }
+    }
+
+    fn path(&self, suffix: &str) -> String {
+        format!("/api/{}{}", self.api_version, suffix)
     }
 
     async fn ensure_token(&self) -> Result<String, Error> {
@@ -41,7 +55,7 @@ impl HttpTransport {
 
         let resp = self
             .client
-            .post(format!("{}/api/v1/auth/token", self.base_url))
+            .post(format!("{}{}", self.base_url, self.path("/auth/token")))
             .json(&AuthRequest {
                 api_key: self.api_key.clone(),
             })
@@ -55,9 +69,14 @@ impl HttpTransport {
         }
 
         let auth: AuthResponse = resp.json().await?;
-        let expires_at = chrono::DateTime::parse_from_rfc3339(&auth.expires_at)
-            .map(|dt| dt.with_timezone(&chrono::Utc))
-            .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::hours(1));
+        let expires_at = auth
+            .expires_at_ms
+            .and_then(chrono::DateTime::from_timestamp_millis)
+            .unwrap_or_else(|| {
+                chrono::DateTime::parse_from_rfc3339(&auth.expires_at)
+                    .map(|dt| dt.with_timezone(&chrono::Utc))
+                    .unwrap_or_else(|_| chrono::Utc::now() + chrono::Duration::hours(1))
+            });
 
         let token = auth.token.clone();
         *guard = Some(TokenState {
@@ -81,6 +100,8 @@ impl HttpTransport {
             #[serde(skip_serializing_if = "Option::is_none")]
             timeout_seconds: Option<u64>,
             #[serde(skip_serializing_if = "Option::is_none")]
+            timeout_ms: Option<u64>,
+            #[serde(skip_serializing_if = "Option::is_none")]
             resources: &'a Option<crate::types::Resources>,
             #[serde(skip_serializing_if = "Option::is_none")]
             env: &'a Option<std::collections::HashMap<String, String>>,
@@ -90,21 +111,40 @@ impl HttpTransport {
             gui: Option<bool>,
             #[serde(skip_serializing_if = "Option::is_none")]
             metadata: &'a Option<std::collections::HashMap<String, String>>,
+            #[serde(skip_serializing_if = "Option::is_none")]
+            capabilities: &'a Option<Vec<String>>,
         }
+
+        let timeout_ms = if self.api_version == "v2" {
+            options
+                .timeout_ms
+                .or_else(|| options.timeout_seconds.map(|s| s * 1000))
+        } else {
+            None
+        };
+        let timeout_seconds = if self.api_version == "v1" {
+            options
+                .timeout_seconds
+                .or_else(|| options.timeout_ms.map(|ms| (ms + 999) / 1000))
+        } else {
+            None
+        };
 
         let body = Body {
             template: options.template.as_deref().unwrap_or("base"),
-            timeout_seconds: options.timeout_seconds,
+            timeout_seconds,
+            timeout_ms,
             resources: &options.resources,
             env: &options.env,
             ports: &options.ports,
             gui: options.gui,
             metadata: &options.metadata,
+            capabilities: &options.capabilities,
         };
 
         let resp = self
             .client
-            .post(format!("{}/api/v1/sandboxes", self.base_url))
+            .post(format!("{}{}", self.base_url, self.path("/sandboxes")))
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
             .json(&body)
@@ -127,7 +167,7 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .get(format!("{}/api/v1/sandboxes/{id}", self.base_url))
+            .get(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}"))))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -148,7 +188,7 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .get(format!("{}/api/v1/sandboxes", self.base_url))
+            .get(format!("{}{}", self.base_url, self.path("/sandboxes")))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -169,7 +209,7 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .delete(format!("{}/api/v1/sandboxes/{id}", self.base_url))
+            .delete(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}"))))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -190,7 +230,7 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .post(format!("{}/api/v1/sandboxes/{id}/keepalive", self.base_url))
+            .post(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}/keepalive"))))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -225,14 +265,20 @@ impl HttpTransport {
             args,
             env: options.env.clone(),
             cwd: options.cwd.clone(),
-            timeout_seconds: options.timeout,
+            timeout_seconds: if self.api_version == "v1" { options.timeout } else { None },
+            timeout_ms: if self.api_version == "v2" {
+                options.timeout.map(|s| s * 1000)
+            } else {
+                None
+            },
         };
 
         let resp = self
             .client
             .post(format!(
-                "{}/api/v1/sandboxes/{sandbox_id}/exec",
-                self.base_url
+                "{}{}",
+                self.base_url,
+                self.path(&format!("/sandboxes/{sandbox_id}/exec"))
             ))
             .header("Authorization", &auth)
             .header("Content-Type", "application/json")
@@ -262,7 +308,7 @@ impl HttpTransport {
             .base_url
             .replacen("https://", "wss://", 1)
             .replacen("http://", "ws://", 1);
-        format!("{ws_base}/api/v1/sandboxes/{id}/ws")
+        format!("{ws_base}{}", self.path(&format!("/sandboxes/{id}/ws")))
     }
 
     pub async fn get_token(&self) -> Option<String> {

@@ -15,11 +15,13 @@ const (
 type CreateSandboxOptions struct {
 	Template       string            `json:"template,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	TimeoutMs      int64             `json:"timeout_ms,omitempty"`
 	Resources      *Resources        `json:"resources,omitempty"`
 	Env            map[string]string `json:"env,omitempty"`
 	Ports          []int             `json:"ports,omitempty"`
 	GUI            bool              `json:"gui,omitempty"`
 	Metadata       map[string]string `json:"metadata,omitempty"`
+	Capabilities   []string          `json:"capabilities,omitempty"`
 }
 
 // Resources specifies sandbox resource limits.
@@ -39,7 +41,27 @@ type SandboxInfo struct {
 	VncURL      string            `json:"vnc_url,omitempty"`
 	CreatedAt   string            `json:"created_at"`
 	ExpiresAt   string            `json:"expires_at"`
+	CreatedAtMs int64             `json:"created_at_ms,omitempty"`
+	ExpiresAtMs int64             `json:"expires_at_ms,omitempty"`
 	Metadata    map[string]string `json:"metadata,omitempty"`
+	Capabilities []string         `json:"capabilities,omitempty"`
+	FromWarmPool bool             `json:"from_warm_pool,omitempty"`
+}
+
+type APIError struct {
+	Status    int            `json:"-"`
+	Code      string         `json:"code,omitempty"`
+	Message   string         `json:"message,omitempty"`
+	Details   map[string]any `json:"details,omitempty"`
+	RequestID string         `json:"request_id,omitempty"`
+	Retryable bool           `json:"retryable,omitempty"`
+}
+
+func (e *APIError) Error() string {
+	if e.Code != "" {
+		return e.Code + ": " + e.Message
+	}
+	return e.Message
 }
 
 // ExecOption is a functional option for Exec.
@@ -120,6 +142,7 @@ type authRequest struct {
 type authResponse struct {
 	Token     string `json:"token"`
 	ExpiresAt string `json:"expires_at"`
+	ExpiresAtMs int64 `json:"expires_at_ms"`
 }
 
 // execRequest is the body sent to POST /api/v1/sandboxes/{id}/exec.
@@ -129,4 +152,5 @@ type execRequest struct {
 	Env            map[string]string `json:"env,omitempty"`
 	Cwd            string            `json:"cwd,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
+	TimeoutMs      int64             `json:"timeout_ms,omitempty"`
 }

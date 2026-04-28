@@ -15,10 +15,23 @@ type Client struct {
 	http *transport.HTTPTransport
 }
 
+type ClientOptions struct {
+	APIVersion string
+}
+
 // NewClient creates a new xgen-sandbox client.
 func NewClient(apiKey, agentURL string) *Client {
+	return NewClientWithOptions(apiKey, agentURL, ClientOptions{})
+}
+
+// NewClientWithOptions creates a new xgen-sandbox client with explicit options.
+func NewClientWithOptions(apiKey, agentURL string, opts ClientOptions) *Client {
+	apiVersion := opts.APIVersion
+	if apiVersion == "" {
+		apiVersion = "v2"
+	}
 	return &Client{
-		http: transport.NewHTTPTransport(agentURL, apiKey),
+		http: transport.NewHTTPTransportWithVersion(agentURL, apiKey, apiVersion),
 	}
 }
 
@@ -28,7 +41,18 @@ func (c *Client) CreateSandbox(ctx context.Context, opts CreateSandboxOptions) (
 		opts.Template = "base"
 	}
 
-	data, status, err := c.http.Do(ctx, http.MethodPost, "/api/v1/sandboxes", opts)
+	body := opts
+	if c.http.APIVersion() == "v2" {
+		if body.TimeoutMs == 0 && body.TimeoutSeconds > 0 {
+			body.TimeoutMs = int64(body.TimeoutSeconds) * 1000
+		}
+		body.TimeoutSeconds = 0
+	} else if body.TimeoutSeconds == 0 && body.TimeoutMs > 0 {
+		body.TimeoutSeconds = int((body.TimeoutMs + 999) / 1000)
+		body.TimeoutMs = 0
+	}
+
+	data, status, err := c.http.Do(ctx, http.MethodPost, c.http.Path("/sandboxes"), body)
 	if err != nil {
 		return nil, err
 	}
@@ -57,7 +81,7 @@ func (c *Client) CreateSandbox(ctx context.Context, opts CreateSandboxOptions) (
 
 // GetSandbox retrieves an existing sandbox by ID.
 func (c *Client) GetSandbox(ctx context.Context, id string) (*Sandbox, error) {
-	data, status, err := c.http.Do(ctx, http.MethodGet, "/api/v1/sandboxes/"+id, nil)
+	data, status, err := c.http.Do(ctx, http.MethodGet, c.http.Path("/sandboxes/"+id), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -74,7 +98,7 @@ func (c *Client) GetSandbox(ctx context.Context, id string) (*Sandbox, error) {
 
 // ListSandboxes returns all sandboxes.
 func (c *Client) ListSandboxes(ctx context.Context) ([]SandboxInfo, error) {
-	data, status, err := c.http.Do(ctx, http.MethodGet, "/api/v1/sandboxes", nil)
+	data, status, err := c.http.Do(ctx, http.MethodGet, c.http.Path("/sandboxes"), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +116,7 @@ func (c *Client) ListSandboxes(ctx context.Context) ([]SandboxInfo, error) {
 func (c *Client) waitForRunning(ctx context.Context, id string, timeout time.Duration) error {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		data, status, err := c.http.Do(ctx, http.MethodGet, "/api/v1/sandboxes/"+id, nil)
+		data, status, err := c.http.Do(ctx, http.MethodGet, c.http.Path("/sandboxes/"+id), nil)
 		if err != nil {
 			return err
 		}

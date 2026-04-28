@@ -15,6 +15,7 @@ import (
 // HTTPTransport handles REST API calls and token management.
 type HTTPTransport struct {
 	baseURL  string
+	apiVersion string
 	apiKey   string
 	client   *http.Client
 	mu       sync.Mutex
@@ -24,11 +25,30 @@ type HTTPTransport struct {
 
 // NewHTTPTransport creates a new HTTP transport.
 func NewHTTPTransport(agentURL, apiKey string) *HTTPTransport {
-	return &HTTPTransport{
-		baseURL: strings.TrimRight(agentURL, "/"),
-		apiKey:  apiKey,
-		client:  &http.Client{Timeout: 30 * time.Second},
+	return NewHTTPTransportWithVersion(agentURL, apiKey, "v2")
+}
+
+// NewHTTPTransportWithVersion creates a transport for a specific API version.
+func NewHTTPTransportWithVersion(agentURL, apiKey, apiVersion string) *HTTPTransport {
+	if apiVersion != "v1" && apiVersion != "v2" {
+		apiVersion = "v2"
 	}
+	return &HTTPTransport{
+		baseURL:    strings.TrimRight(agentURL, "/"),
+		apiVersion: apiVersion,
+		apiKey:     apiKey,
+		client:     &http.Client{Timeout: 30 * time.Second},
+	}
+}
+
+// Path returns an absolute API path for the configured version.
+func (h *HTTPTransport) Path(suffix string) string {
+	return fmt.Sprintf("/api/%s%s", h.apiVersion, suffix)
+}
+
+// APIVersion returns the configured HTTP API version.
+func (h *HTTPTransport) APIVersion() string {
+	return h.apiVersion
 }
 
 // Token returns the current auth token, or empty string if not yet obtained.
@@ -42,7 +62,7 @@ func (h *HTTPTransport) Token() string {
 func (h *HTTPTransport) WsURL(sandboxID string) string {
 	wsBase := strings.Replace(h.baseURL, "https://", "wss://", 1)
 	wsBase = strings.Replace(wsBase, "http://", "ws://", 1)
-	return fmt.Sprintf("%s/api/v1/sandboxes/%s/ws", wsBase, sandboxID)
+	return fmt.Sprintf("%s%s", wsBase, h.Path(fmt.Sprintf("/sandboxes/%s/ws", sandboxID)))
 }
 
 // ensureToken fetches or refreshes the auth token as needed.
@@ -60,7 +80,7 @@ func (h *HTTPTransport) ensureToken(ctx context.Context) (string, error) {
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		h.baseURL+"/api/v1/auth/token", bytes.NewReader(body))
+		h.baseURL+h.Path("/auth/token"), bytes.NewReader(body))
 	if err != nil {
 		return "", err
 	}
@@ -80,13 +100,16 @@ func (h *HTTPTransport) ensureToken(ctx context.Context) (string, error) {
 	var result struct {
 		Token     string `json:"token"`
 		ExpiresAt string `json:"expires_at"`
+		ExpiresAtMs int64 `json:"expires_at_ms"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("auth decode failed: %w", err)
 	}
 
 	h.token = result.Token
-	if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
+	if result.ExpiresAtMs > 0 {
+		h.expireAt = time.UnixMilli(result.ExpiresAtMs)
+	} else if t, err := time.Parse(time.RFC3339, result.ExpiresAt); err == nil {
 		h.expireAt = t
 	}
 	return h.token, nil

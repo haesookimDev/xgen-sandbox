@@ -147,7 +147,6 @@ func (s *Server) handleDeleteSandboxV2(w http.ResponseWriter, r *http.Request) {
 		SandboxesByStatus.WithLabelValues(string(sbx.Status)).Dec()
 	}
 
-	s.wsProxy.DisconnectSidecar(id)
 	s.sandboxMgr.SetStatus(id, v1.StatusStopped)
 	s.sandboxMgr.Remove(id)
 	sandboxDeleteTotal.Inc()

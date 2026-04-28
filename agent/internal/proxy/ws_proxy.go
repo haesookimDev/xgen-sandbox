@@ -17,42 +17,19 @@ import (
 // WSProxy handles WebSocket proxying between clients and sandbox sidecars.
 type WSProxy struct {
 	sandboxMgr *sandbox.Manager
-	mu         sync.RWMutex
-	conns      map[string]*websocket.Conn // sandboxID -> sidecar connection
+	sidecarURL func(podIP string) string
 }
 
 // NewWSProxy creates a new WebSocket proxy.
 func NewWSProxy(sandboxMgr *sandbox.Manager) *WSProxy {
 	return &WSProxy{
 		sandboxMgr: sandboxMgr,
-		conns:      make(map[string]*websocket.Conn),
+		sidecarURL: defaultSidecarURL,
 	}
 }
 
-// ConnectToSidecar establishes a WebSocket connection to a sandbox's sidecar.
-func (p *WSProxy) ConnectToSidecar(ctx context.Context, sandboxID, podIP string) error {
-	sidecarURL := fmt.Sprintf("ws://%s:9000/ws", podIP)
-	conn, _, err := websocket.Dial(ctx, sidecarURL, nil)
-	if err != nil {
-		return fmt.Errorf("connect to sidecar: %w", err)
-	}
-
-	p.mu.Lock()
-	p.conns[sandboxID] = conn
-	p.mu.Unlock()
-
-	return nil
-}
-
-// DisconnectSidecar closes the connection to a sandbox's sidecar.
-func (p *WSProxy) DisconnectSidecar(sandboxID string) {
-	p.mu.Lock()
-	conn, ok := p.conns[sandboxID]
-	if ok {
-		conn.Close(websocket.StatusNormalClosure, "sandbox destroyed")
-		delete(p.conns, sandboxID)
-	}
-	p.mu.Unlock()
+func defaultSidecarURL(podIP string) string {
+	return fmt.Sprintf("ws://%s:9000/ws", podIP)
 }
 
 // HandleClientWS handles a client WebSocket connection and proxies to the sidecar.
@@ -80,8 +57,7 @@ func (p *WSProxy) HandleClientWS(w http.ResponseWriter, r *http.Request, sandbox
 	log.Printf("ws proxy: client connected for sandbox %s", sandboxID)
 
 	// Create a dedicated sidecar connection for this client session.
-	sidecarURL := fmt.Sprintf("ws://%s:9000/ws", sbx.PodIP)
-	sidecarConn, _, err := websocket.Dial(r.Context(), sidecarURL, nil)
+	sidecarConn, _, err := websocket.Dial(r.Context(), p.sidecarURL(sbx.PodIP), nil)
 	if err != nil {
 		log.Printf("ws proxy: connect to sidecar failed for %s: %v", sandboxID, err)
 		clientConn.Close(websocket.StatusInternalError, "failed to connect to sandbox")
@@ -130,32 +106,6 @@ func proxyWS(ctx context.Context, src, dst *websocket.Conn, direction string) {
 	}
 }
 
-// SendToSidecar sends a raw message to a sidecar.
-func (p *WSProxy) SendToSidecar(ctx context.Context, sandboxID string, data []byte) error {
-	p.mu.RLock()
-	conn, ok := p.conns[sandboxID]
-	p.mu.RUnlock()
-	if !ok {
-		return fmt.Errorf("no sidecar connection for sandbox: %s", sandboxID)
-	}
-	return conn.Write(ctx, websocket.MessageBinary, data)
-}
-
-// ReadFromSidecar reads a message from a sidecar. Blocking.
-func (p *WSProxy) ReadFromSidecar(ctx context.Context, sandboxID string) ([]byte, error) {
-	p.mu.RLock()
-	conn, ok := p.conns[sandboxID]
-	p.mu.RUnlock()
-	if !ok {
-		return nil, fmt.Errorf("no sidecar connection for sandbox: %s", sandboxID)
-	}
-	_, data, err := conn.Read(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return data, nil
-}
-
 // ExecResult holds the result of a synchronous command execution.
 type ExecResult struct {
 	ExitCode int
@@ -176,8 +126,7 @@ func (p *WSProxy) ExecSync(ctx context.Context, sandboxID string, command string
 	execCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	sidecarURL := fmt.Sprintf("ws://%s:9000/ws", sbx.PodIP)
-	conn, _, err := websocket.Dial(execCtx, sidecarURL, nil)
+	conn, _, err := websocket.Dial(execCtx, p.sidecarURL(sbx.PodIP), nil)
 	if err != nil {
 		return nil, fmt.Errorf("connect to sidecar: %w", err)
 	}

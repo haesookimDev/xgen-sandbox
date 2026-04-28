@@ -10,7 +10,7 @@ export class XgenClient {
   private http: HttpTransport;
 
   constructor(options: XgenClientOptions) {
-    this.http = new HttpTransport(options.agentUrl, options.apiKey);
+    this.http = new HttpTransport(options.agentUrl, options.apiKey, options.apiVersion ?? "v2");
   }
 
   /**

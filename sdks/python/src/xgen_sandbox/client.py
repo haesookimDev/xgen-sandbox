@@ -26,8 +26,8 @@ class XgenClient:
         agent_url: Base URL of the xgen-sandbox agent (e.g. ``"http://localhost:8080"``).
     """
 
-    def __init__(self, api_key: str, agent_url: str) -> None:
-        self._http = HttpTransport(agent_url, api_key)
+    def __init__(self, api_key: str, agent_url: str, api_version: str = "v2") -> None:
+        self._http = HttpTransport(agent_url, api_key, api_version)
 
     async def create_sandbox(
         self,

@@ -82,14 +82,18 @@ func (s *Sandbox) Exec(ctx context.Context, command string, opts ...ExecOption) 
 	args := append(parts[1:], cfg.Args...)
 
 	body := execRequest{
-		Command:        parts[0],
-		Args:           args,
-		Env:            cfg.Env,
-		Cwd:            cfg.Cwd,
-		TimeoutSeconds: cfg.Timeout,
+		Command: parts[0],
+		Args:    args,
+		Env:     cfg.Env,
+		Cwd:     cfg.Cwd,
+	}
+	if s.httpT.APIVersion() == "v2" {
+		body.TimeoutMs = int64(cfg.Timeout) * 1000
+	} else {
+		body.TimeoutSeconds = cfg.Timeout
 	}
 
-	path := fmt.Sprintf("/api/v1/sandboxes/%s/exec", s.ID)
+	path := s.httpT.Path(fmt.Sprintf("/sandboxes/%s/exec", s.ID))
 	data, status, err := s.httpT.Do(ctx, http.MethodPost, path, body)
 	if err != nil {
 		return nil, err

@@ -1,14 +1,64 @@
 import type { CreateSandboxOptions, SandboxInfo } from "../types.js";
 
+export class XgenApiError extends Error {
+  code?: string;
+  retryable?: boolean;
+  details?: Record<string, unknown>;
+  requestId?: string;
+  status: number;
+
+  constructor(status: number, body: any, fallback: string) {
+    const message = body?.message ?? body?.error ?? fallback;
+    super(message);
+    this.name = "XgenApiError";
+    this.status = status;
+    this.code = body?.code;
+    this.retryable = body?.retryable;
+    this.details = body?.details;
+    this.requestId = body?.request_id;
+  }
+}
+
 export class HttpTransport {
   private baseUrl: string;
   private apiKey: string;
+  private apiVersion: "v1" | "v2";
   private token: string | null = null;
   private tokenExpiresAt: number = 0;
 
-  constructor(agentUrl: string, apiKey: string) {
+  constructor(agentUrl: string, apiKey: string, apiVersion: "v1" | "v2" = "v2") {
     this.baseUrl = agentUrl.replace(/\/$/, "");
     this.apiKey = apiKey;
+    this.apiVersion = apiVersion;
+  }
+
+  private path(suffix: string): string {
+    return `/api/${this.apiVersion}${suffix}`;
+  }
+
+  private async readError(resp: Response, fallback: string): Promise<XgenApiError> {
+    const body = await resp.json().catch(async () => ({ message: await resp.text().catch(() => fallback) }));
+    return new XgenApiError(resp.status, body, fallback);
+  }
+
+  private parseSandbox(data: any): SandboxInfo {
+    const createdAtMs = data.created_at_ms;
+    const expiresAtMs = data.expires_at_ms;
+    return {
+      id: data.id,
+      status: data.status,
+      template: data.template,
+      wsUrl: data.ws_url,
+      previewUrls: data.preview_urls ?? {},
+      vncUrl: data.vnc_url,
+      createdAt: data.created_at ?? (createdAtMs ? new Date(createdAtMs).toISOString() : ""),
+      expiresAt: data.expires_at ?? (expiresAtMs ? new Date(expiresAtMs).toISOString() : ""),
+      createdAtMs,
+      expiresAtMs,
+      metadata: data.metadata,
+      capabilities: data.capabilities,
+      fromWarmPool: data.from_warm_pool,
+    };
   }
 
   private async ensureToken(): Promise<string> {
@@ -17,19 +67,19 @@ export class HttpTransport {
       return this.token;
     }
 
-    const resp = await fetch(`${this.baseUrl}/api/v1/auth/token`, {
+    const resp = await fetch(`${this.baseUrl}${this.path("/auth/token")}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ api_key: this.apiKey }),
     });
 
     if (!resp.ok) {
-      throw new Error(`Auth failed (POST ${this.baseUrl}/api/v1/auth/token): ${resp.status} ${await resp.text()}`);
+      throw await this.readError(resp, "Auth failed");
     }
 
     const data = await resp.json();
     this.token = data.token;
-    this.tokenExpiresAt = new Date(data.expires_at).getTime();
+    this.tokenExpiresAt = data.expires_at_ms ?? new Date(data.expires_at).getTime();
     return this.token!;
   }
 
@@ -42,108 +92,89 @@ export class HttpTransport {
   }
 
   async createSandbox(options: CreateSandboxOptions): Promise<SandboxInfo> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/sandboxes`, {
+    const body =
+      this.apiVersion === "v2"
+        ? {
+            template: options.template ?? "base",
+            timeout_ms: options.timeoutMs ?? (options.timeoutSeconds ? options.timeoutSeconds * 1000 : undefined),
+            resources: options.resources,
+            env: options.env,
+            ports: options.ports,
+            gui: options.gui,
+            metadata: options.metadata,
+            capabilities: options.capabilities,
+          }
+        : {
+            template: options.template ?? "base",
+            timeout_seconds: options.timeoutSeconds ?? (options.timeoutMs ? Math.ceil(options.timeoutMs / 1000) : undefined),
+            resources: options.resources,
+            env: options.env,
+            ports: options.ports,
+            gui: options.gui,
+            metadata: options.metadata,
+            capabilities: options.capabilities,
+          };
+
+    const resp = await fetch(`${this.baseUrl}${this.path("/sandboxes")}`, {
       method: "POST",
       headers: await this.headers(),
-      body: JSON.stringify({
-        template: options.template ?? "base",
-        timeout_seconds: options.timeoutSeconds,
-        resources: options.resources,
-        env: options.env,
-        ports: options.ports,
-        gui: options.gui,
-        metadata: options.metadata,
-        capabilities: options.capabilities,
-      }),
+      body: JSON.stringify(body),
     });
 
     if (!resp.ok) {
-      const err = await resp.json().catch(() => ({ error: resp.statusText }));
-      throw new Error(`Create sandbox failed (${resp.status}): ${err.error}`);
+      throw await this.readError(resp, "Create sandbox failed");
     }
 
-    const data = await resp.json();
-    return {
-      id: data.id,
-      status: data.status,
-      template: data.template,
-      wsUrl: data.ws_url,
-      previewUrls: data.preview_urls ?? {},
-      vncUrl: data.vnc_url,
-      createdAt: data.created_at,
-      expiresAt: data.expires_at,
-      metadata: data.metadata,
-      capabilities: data.capabilities,
-    };
+    return this.parseSandbox(await resp.json());
   }
 
   async getSandbox(id: string): Promise<SandboxInfo> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/sandboxes/${id}`, {
+    const resp = await fetch(`${this.baseUrl}${this.path(`/sandboxes/${id}`)}`, {
       headers: await this.headers(),
     });
     if (!resp.ok) {
-      throw new Error(`Get sandbox failed: sandbox '${id}' not found (${resp.status})`);
+      throw await this.readError(resp, `Get sandbox failed: sandbox '${id}' not found`);
     }
-    const data = await resp.json();
-    return {
-      id: data.id,
-      status: data.status,
-      template: data.template,
-      wsUrl: data.ws_url,
-      previewUrls: data.preview_urls ?? {},
-      vncUrl: data.vnc_url,
-      createdAt: data.created_at,
-      expiresAt: data.expires_at,
-      metadata: data.metadata,
-      capabilities: data.capabilities,
-    };
+    return this.parseSandbox(await resp.json());
   }
 
   async listSandboxes(): Promise<SandboxInfo[]> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/sandboxes`, {
+    const resp = await fetch(`${this.baseUrl}${this.path("/sandboxes")}`, {
       headers: await this.headers(),
     });
     if (!resp.ok) {
-      throw new Error(`List sandboxes failed: ${resp.status}`);
+      throw await this.readError(resp, "List sandboxes failed");
     }
     const data = await resp.json();
-    return data.map((d: any) => ({
-      id: d.id,
-      status: d.status,
-      template: d.template,
-      wsUrl: d.ws_url,
-      previewUrls: d.preview_urls ?? {},
-      createdAt: d.created_at,
-      expiresAt: d.expires_at,
-    }));
+    return data.map((d: any) => this.parseSandbox(d));
   }
 
   async deleteSandbox(id: string): Promise<void> {
-    const resp = await fetch(`${this.baseUrl}/api/v1/sandboxes/${id}`, {
+    const resp = await fetch(`${this.baseUrl}${this.path(`/sandboxes/${id}`)}`, {
       method: "DELETE",
       headers: await this.headers(),
     });
     if (!resp.ok && resp.status !== 204) {
-      throw new Error(`Delete sandbox '${id}' failed (${resp.status})`);
+      throw await this.readError(resp, `Delete sandbox '${id}' failed`);
     }
   }
 
   async keepAlive(id: string): Promise<void> {
     const resp = await fetch(
-      `${this.baseUrl}/api/v1/sandboxes/${id}/keepalive`,
+      `${this.baseUrl}${this.path(`/sandboxes/${id}/keepalive`)}`,
       {
         method: "POST",
         headers: await this.headers(),
       }
     );
     if (!resp.ok && resp.status !== 204) {
-      throw new Error(`Keepalive for sandbox '${id}' failed (${resp.status})`);
+      throw await this.readError(resp, `Keepalive for sandbox '${id}' failed`);
     }
   }
 
   getWsUrl(id: string): string {
     const wsBase = this.baseUrl.replace(/^http/, "ws");
-    return `${wsBase}/api/v1/sandboxes/${id}/ws`;
+    return `${wsBase}${this.path(`/sandboxes/${id}/ws`)}`;
   }
 
   getToken(): string | null {

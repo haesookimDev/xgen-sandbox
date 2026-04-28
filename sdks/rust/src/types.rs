@@ -18,6 +18,8 @@ pub struct CreateSandboxOptions {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub resources: Option<Resources>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub env: Option<HashMap<String, String>>,
@@ -27,6 +29,8 @@ pub struct CreateSandboxOptions {
     pub gui: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub metadata: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub capabilities: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,9 +52,24 @@ pub struct SandboxInfo {
     #[serde(default)]
     pub preview_urls: HashMap<String, String>,
     pub vnc_url: Option<String>,
+    #[serde(default)]
     pub created_at: String,
+    #[serde(default)]
     pub expires_at: String,
+    pub created_at_ms: Option<i64>,
+    pub expires_at_ms: Option<i64>,
     pub metadata: Option<HashMap<String, String>>,
+    pub capabilities: Option<Vec<String>>,
+    pub from_warm_pool: Option<bool>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct StructuredError {
+    pub code: Option<String>,
+    pub message: Option<String>,
+    pub details: Option<serde_json::Value>,
+    pub request_id: Option<String>,
+    pub retryable: Option<bool>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -88,7 +107,9 @@ pub struct FileEvent {
 #[derive(Deserialize)]
 pub(crate) struct AuthResponse {
     pub token: String,
+    #[serde(default)]
     pub expires_at: String,
+    pub expires_at_ms: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -114,4 +135,6 @@ pub(crate) struct ExecApiRequest {
     pub cwd: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_seconds: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timeout_ms: Option<u64>,
 }
