@@ -63,7 +63,7 @@
 
 ## P1 - LLM 친화 SDK/CLI/세션 관리
 
-- [ ] P1-01 API/SDK 기본 경로를 v2로 전환한다.
+- [x] P1-01 API/SDK 기본 경로를 v2로 전환한다.
   - TypeScript/Python/Go/Rust SDK와 dashboard가 `/api/v2`를 기본으로 사용하게 한다.
   - v1 compatibility mode를 옵션으로만 남긴다.
   - `timeout_ms`, `created_at_ms`, `expires_at_ms`, structured error를 SDK 타입에 반영한다.
