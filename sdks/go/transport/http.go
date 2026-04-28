@@ -14,13 +14,13 @@ import (
 
 // HTTPTransport handles REST API calls and token management.
 type HTTPTransport struct {
-	baseURL  string
+	baseURL    string
 	apiVersion string
-	apiKey   string
-	client   *http.Client
-	mu       sync.Mutex
-	token    string
-	expireAt time.Time
+	apiKey     string
+	client     *http.Client
+	mu         sync.Mutex
+	token      string
+	expireAt   time.Time
 }
 
 // NewHTTPTransport creates a new HTTP transport.
@@ -98,9 +98,9 @@ func (h *HTTPTransport) ensureToken(ctx context.Context) (string, error) {
 	}
 
 	var result struct {
-		Token     string `json:"token"`
-		ExpiresAt string `json:"expires_at"`
-		ExpiresAtMs int64 `json:"expires_at_ms"`
+		Token       string `json:"token"`
+		ExpiresAt   string `json:"expires_at"`
+		ExpiresAtMs int64  `json:"expires_at_ms"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
 		return "", fmt.Errorf("auth decode failed: %w", err)

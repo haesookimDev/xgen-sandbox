@@ -469,7 +469,7 @@ func (s *Sandbox) OnPortOpen(ctx context.Context, callback func(port int)) (Canc
 
 // KeepAlive sends a keep-alive signal for the sandbox.
 func (s *Sandbox) KeepAlive(ctx context.Context) error {
-	path := fmt.Sprintf("/api/v1/sandboxes/%s/keepalive", s.ID)
+	path := s.httpT.Path(fmt.Sprintf("/sandboxes/%s/keepalive", s.ID))
 	_, status, err := s.httpT.Do(ctx, http.MethodPost, path, nil)
 	if err != nil {
 		return err
@@ -487,7 +487,7 @@ func (s *Sandbox) Destroy(ctx context.Context) error {
 		s.ws = nil
 	}
 
-	path := fmt.Sprintf("/api/v1/sandboxes/%s", s.ID)
+	path := s.httpT.Path(fmt.Sprintf("/sandboxes/%s", s.ID))
 	_, status, err := s.httpT.Do(ctx, http.MethodDelete, path, nil)
 	if err != nil {
 		return err

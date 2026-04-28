@@ -33,19 +33,19 @@ type Resources struct {
 
 // SandboxInfo holds metadata about a sandbox returned by the API.
 type SandboxInfo struct {
-	ID          string            `json:"id"`
-	Status      SandboxStatus     `json:"status"`
-	Template    string            `json:"template"`
-	WsURL       string            `json:"ws_url"`
-	PreviewURLs map[int]string    `json:"preview_urls"`
-	VncURL      string            `json:"vnc_url,omitempty"`
-	CreatedAt   string            `json:"created_at"`
-	ExpiresAt   string            `json:"expires_at"`
-	CreatedAtMs int64             `json:"created_at_ms,omitempty"`
-	ExpiresAtMs int64             `json:"expires_at_ms,omitempty"`
-	Metadata    map[string]string `json:"metadata,omitempty"`
-	Capabilities []string         `json:"capabilities,omitempty"`
-	FromWarmPool bool             `json:"from_warm_pool,omitempty"`
+	ID           string            `json:"id"`
+	Status       SandboxStatus     `json:"status"`
+	Template     string            `json:"template"`
+	WsURL        string            `json:"ws_url"`
+	PreviewURLs  map[int]string    `json:"preview_urls"`
+	VncURL       string            `json:"vnc_url,omitempty"`
+	CreatedAt    string            `json:"created_at"`
+	ExpiresAt    string            `json:"expires_at"`
+	CreatedAtMs  int64             `json:"created_at_ms,omitempty"`
+	ExpiresAtMs  int64             `json:"expires_at_ms,omitempty"`
+	Metadata     map[string]string `json:"metadata,omitempty"`
+	Capabilities []string          `json:"capabilities,omitempty"`
+	FromWarmPool bool              `json:"from_warm_pool,omitempty"`
 }
 
 type APIError struct {
@@ -140,9 +140,9 @@ type authRequest struct {
 
 // authResponse is the response from POST /api/v1/auth/token.
 type authResponse struct {
-	Token     string `json:"token"`
-	ExpiresAt string `json:"expires_at"`
-	ExpiresAtMs int64 `json:"expires_at_ms"`
+	Token       string `json:"token"`
+	ExpiresAt   string `json:"expires_at"`
+	ExpiresAtMs int64  `json:"expires_at_ms"`
 }
 
 // execRequest is the body sent to POST /api/v1/sandboxes/{id}/exec.

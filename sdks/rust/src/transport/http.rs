@@ -3,8 +3,8 @@ use tokio::sync::Mutex;
 
 use crate::error::Error;
 use crate::types::{
-    AuthRequest, AuthResponse, CreateSandboxOptions, ExecApiRequest, ExecApiResponse,
-    ExecOptions, ExecResult, SandboxInfo,
+    AuthRequest, AuthResponse, CreateSandboxOptions, ExecApiRequest, ExecApiResponse, ExecOptions,
+    ExecResult, SandboxInfo,
 };
 
 pub struct HttpTransport {
@@ -91,7 +91,10 @@ impl HttpTransport {
         Ok(format!("Bearer {token}"))
     }
 
-    pub async fn create_sandbox(&self, options: &CreateSandboxOptions) -> Result<SandboxInfo, Error> {
+    pub async fn create_sandbox(
+        &self,
+        options: &CreateSandboxOptions,
+    ) -> Result<SandboxInfo, Error> {
         let auth = self.auth_headers().await?;
 
         #[derive(serde::Serialize)]
@@ -167,7 +170,11 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .get(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}"))))
+            .get(format!(
+                "{}{}",
+                self.base_url,
+                self.path(&format!("/sandboxes/{id}"))
+            ))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -209,7 +216,11 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .delete(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}"))))
+            .delete(format!(
+                "{}{}",
+                self.base_url,
+                self.path(&format!("/sandboxes/{id}"))
+            ))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -230,7 +241,11 @@ impl HttpTransport {
         let auth = self.auth_headers().await?;
         let resp = self
             .client
-            .post(format!("{}{}", self.base_url, self.path(&format!("/sandboxes/{id}/keepalive"))))
+            .post(format!(
+                "{}{}",
+                self.base_url,
+                self.path(&format!("/sandboxes/{id}/keepalive"))
+            ))
             .header("Authorization", &auth)
             .send()
             .await?;
@@ -265,7 +280,11 @@ impl HttpTransport {
             args,
             env: options.env.clone(),
             cwd: options.cwd.clone(),
-            timeout_seconds: if self.api_version == "v1" { options.timeout } else { None },
+            timeout_seconds: if self.api_version == "v1" {
+                options.timeout
+            } else {
+                None
+            },
             timeout_ms: if self.api_version == "v2" {
                 options.timeout.map(|s| s * 1000)
             } else {

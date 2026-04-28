@@ -33,6 +33,7 @@ class XgenClient:
         self,
         template: str = "base",
         timeout_seconds: int | None = None,
+        timeout_ms: int | None = None,
         env: dict[str, str] | None = None,
         ports: list[int] | None = None,
         gui: bool | None = None,
@@ -58,6 +59,7 @@ class XgenClient:
         options = CreateSandboxOptions(
             template=template,
             timeout_seconds=timeout_seconds,
+            timeout_ms=timeout_ms,
             env=env,
             ports=ports,
             gui=gui,

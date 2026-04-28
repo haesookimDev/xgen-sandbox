@@ -24,16 +24,17 @@ impl XgenClient {
     pub fn new_with_options(api_key: &str, agent_url: &str, options: ClientOptions) -> Self {
         let api_version = options.api_version.as_deref().unwrap_or("v2");
         Self {
-            http: Arc::new(HttpTransport::new_with_version(agent_url, api_key, api_version)),
+            http: Arc::new(HttpTransport::new_with_version(
+                agent_url,
+                api_key,
+                api_version,
+            )),
         }
     }
 
     /// Create a new sandbox and return a Sandbox instance.
     /// Waits for the sandbox to reach "running" status.
-    pub async fn create_sandbox(
-        &self,
-        options: CreateSandboxOptions,
-    ) -> Result<Sandbox, Error> {
+    pub async fn create_sandbox(&self, options: CreateSandboxOptions) -> Result<Sandbox, Error> {
         let info = self.http.create_sandbox(&options).await?;
 
         if info.status != SandboxStatus::Running {

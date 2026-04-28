@@ -16,12 +16,16 @@ struct PendingRequest {
 }
 
 pub struct WsTransport {
-    write_tx: Mutex<Option<futures_util::stream::SplitSink<
-        tokio_tungstenite::WebSocketStream<
-            tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+    write_tx: Mutex<
+        Option<
+            futures_util::stream::SplitSink<
+                tokio_tungstenite::WebSocketStream<
+                    tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
+                >,
+                Message,
+            >,
         >,
-        Message,
-    >>>,
+    >,
     handlers: Arc<RwLock<HashMap<u8, Vec<(u64, MessageHandler)>>>>,
     pending: Arc<Mutex<HashMap<u32, PendingRequest>>>,
     next_id: AtomicU32,
@@ -31,7 +35,8 @@ pub struct WsTransport {
 
 impl WsTransport {
     pub async fn connect(url: &str, token: &str) -> Result<Arc<Self>, Error> {
-        let encoded_token: String = url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
+        let encoded_token: String =
+            url::form_urlencoded::byte_serialize(token.as_bytes()).collect();
         let full_url = format!("{url}?token={encoded_token}");
         let (ws_stream, _) = tokio_tungstenite::connect_async(&full_url).await?;
         let (write, read) = ws_stream.split();

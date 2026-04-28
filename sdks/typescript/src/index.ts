@@ -1,5 +1,6 @@
 export { XgenClient } from "./client.js";
 export { Sandbox, Terminal } from "./sandbox.js";
+export { XgenApiError } from "./transport/http.js";
 export type {
   XgenClientOptions,
   CreateSandboxOptions,
@@ -12,4 +13,5 @@ export type {
   FileInfo,
   FileEvent,
   Disposable,
+  StructuredError,
 } from "./types.js";
