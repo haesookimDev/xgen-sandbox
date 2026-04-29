@@ -68,7 +68,7 @@
   - v1 compatibility mode를 옵션으로만 남긴다.
   - `timeout_ms`, `created_at_ms`, `expires_at_ms`, structured error를 SDK 타입에 반영한다.
 
-- [ ] P1-02 LLM용 CLI를 추가한다.
+- [x] P1-02 LLM용 CLI를 추가한다.
   - 명령:
     - `xgen auth token --json`
     - `xgen create --template nodejs --ttl-ms 1800000 --metadata key=value --json`

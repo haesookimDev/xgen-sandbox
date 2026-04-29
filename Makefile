@@ -1,7 +1,7 @@
 -include .env
 export
 
-.PHONY: all build build-agent build-sidecar build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint security-scan help
+.PHONY: all build build-agent build-sidecar build-cli build-dashboard build-images dev-cluster dev-deploy dev-dashboard dev-teardown test lint security-scan help
 
 # --- Help ---
 
@@ -12,13 +12,16 @@ help: ## Show available targets
 
 all: build ## Build agent and sidecar binaries
 
-build: build-agent build-sidecar ## Build agent and sidecar binaries
+build: build-agent build-sidecar build-cli ## Build agent, sidecar, and CLI binaries
 
 build-agent: ## Build agent binary
 	cd agent && go build -o ../bin/agent ./cmd/agent
 
 build-sidecar: ## Build sidecar binary
 	cd sidecar && go build -o ../bin/sidecar ./cmd/sidecar
+
+build-cli: ## Build xgen CLI binary
+	cd cli && go build -o ../bin/xgen ./cmd/xgen
 
 build-images: ## Build all Docker images
 	docker build -t ghcr.io/xgen-sandbox/agent:latest ./agent
