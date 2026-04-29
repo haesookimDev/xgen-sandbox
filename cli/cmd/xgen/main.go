@@ -39,6 +39,9 @@ const (
 	msgPortOpen     byte = 0x40
 	msgSandboxReady byte = 0x50
 	headerSize           = 9
+
+	defaultSessionIdleTTLMS        int64 = 30 * 60 * 1000
+	defaultSessionKeepaliveAfterMS int64 = 5 * 60 * 1000
 )
 
 type cliConfig struct {
@@ -104,6 +107,18 @@ type sessionRecord struct {
 	ExpiresAtMs  int64             `json:"expires_at_ms,omitempty"`
 	LastUsedAtMs int64             `json:"last_used_at_ms"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
+}
+
+type sessionPolicy struct {
+	IdleTTLMS        int64 `json:"idle_ttl_ms"`
+	KeepaliveAfterMS int64 `json:"keepalive_after_ms"`
+}
+
+type gcResult struct {
+	Removed   []sessionRecord `json:"removed"`
+	Destroyed []sessionRecord `json:"destroyed"`
+	Kept      []sessionRecord `json:"kept"`
+	Errors    []apiError      `json:"errors,omitempty"`
 }
 
 type stringList []string
@@ -231,15 +246,19 @@ func runCreate(client *apiClient, args []string) int {
 	if err != nil {
 		return fail(err)
 	}
-	if len(meta) > 0 {
-		body["metadata"] = meta
+	sessionID := "sess_" + randomHex(8)
+	meta["xgen_session_id"] = sessionID
+	meta["xgen_session_registry"] = "cli"
+	if cwd, err := os.Getwd(); err == nil {
+		meta["xgen_cwd"] = cwd
 	}
+	body["metadata"] = meta
 
 	var info sandboxInfo
 	if err := client.post(context.Background(), "/sandboxes", body, &info); err != nil {
 		return fail(err)
 	}
-	rec := sessionFromSandbox(info)
+	rec := sessionFromSandbox(sessionID, info)
 	_ = upsertSession(rec)
 	return printJSON(map[string]any{"sandbox": info, "session": rec})
 }
@@ -262,6 +281,9 @@ func runExec(client *apiClient, args []string) int {
 	cmd := fs.Args()
 	if len(cmd) == 0 {
 		return fail(errors.New("missing command after --"))
+	}
+	if err := autoKeepaliveSession(context.Background(), client, sandboxID); err != nil {
+		return fail(withSandbox(err, sandboxID))
 	}
 	if *stream {
 		code, err := execStream(client, sandboxID, cmd, *timeoutMs)
@@ -310,6 +332,9 @@ func runFS(client *apiClient, args []string) int {
 		if len(args) < 3 {
 			return fail(errors.New("usage: xgen fs read <sandbox-id> <path> --json"))
 		}
+		if err := autoKeepaliveSession(context.Background(), client, args[1]); err != nil {
+			return fail(withSandbox(err, args[1]))
+		}
 		data, err := wsRequestPayload(client, args[1], msgFsRead, map[string]any{"path": args[2]})
 		if err != nil {
 			return fail(withSandbox(err, args[1]))
@@ -324,6 +349,9 @@ func runFS(client *apiClient, args []string) int {
 		if len(args) < 4 {
 			return fail(errors.New("usage: xgen fs write <sandbox-id> <path> <content> --json"))
 		}
+		if err := autoKeepaliveSession(context.Background(), client, args[1]); err != nil {
+			return fail(withSandbox(err, args[1]))
+		}
 		if _, err := wsRequestPayload(client, args[1], msgFsWrite, map[string]any{"path": args[2], "content": []byte(args[3])}); err != nil {
 			return fail(withSandbox(err, args[1]))
 		}
@@ -332,6 +360,9 @@ func runFS(client *apiClient, args []string) int {
 	case "list":
 		if len(args) < 3 {
 			return fail(errors.New("usage: xgen fs list <sandbox-id> <path> --json"))
+		}
+		if err := autoKeepaliveSession(context.Background(), client, args[1]); err != nil {
+			return fail(withSandbox(err, args[1]))
 		}
 		data, err := wsRequestPayload(client, args[1], msgFsList, map[string]any{"path": args[2]})
 		if err != nil {
@@ -353,6 +384,9 @@ func runFS(client *apiClient, args []string) int {
 		_ = fs.Bool("json", true, "emit JSON")
 		if err := fs.Parse(args[3:]); err != nil {
 			return fail(err)
+		}
+		if err := autoKeepaliveSession(context.Background(), client, args[1]); err != nil {
+			return fail(withSandbox(err, args[1]))
 		}
 		if _, err := wsRequestPayload(client, args[1], msgFsRemove, map[string]any{"path": args[2], "recursive": *recursive}); err != nil {
 			return fail(withSandbox(err, args[1]))
@@ -379,6 +413,9 @@ func runPort(client *apiClient, args []string) int {
 	if err := fs.Parse(args[3:]); err != nil {
 		return fail(err)
 	}
+	if err := autoKeepaliveSession(context.Background(), client, args[1]); err != nil {
+		return fail(withSandbox(err, args[1]))
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(*timeoutMs)*time.Millisecond)
 	defer cancel()
 	if err := waitPort(ctx, client, args[1], uint16(port)); err != nil {
@@ -394,14 +431,26 @@ func runSession(client *apiClient, args []string) int {
 	}
 	switch args[0] {
 	case "list":
+		fs := flag.NewFlagSet("session list", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		_ = fs.Bool("json", true, "emit JSON")
+		if err := fs.Parse(args[1:]); err != nil {
+			return fail(err)
+		}
 		sessions, err := loadSessions()
 		if err != nil {
 			return fail(err)
 		}
-		return printJSON(map[string]any{"sessions": sessions})
+		return printJSON(map[string]any{"sessions": sessions, "policy": currentSessionPolicy()})
 	case "get":
 		if len(args) < 2 {
 			return fail(errors.New("usage: xgen session get <session-id> --json"))
+		}
+		fs := flag.NewFlagSet("session get", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		_ = fs.Bool("json", true, "emit JSON")
+		if err := fs.Parse(args[2:]); err != nil {
+			return fail(err)
 		}
 		rec, ok, err := getSession(args[1])
 		if err != nil {
@@ -425,8 +474,8 @@ func runSession(client *apiClient, args []string) int {
 		if err := client.post(context.Background(), "/sandboxes/"+url.PathEscape(rec.SandboxID)+"/keepalive", nil, nil); err != nil {
 			return fail(withSandbox(err, rec.SandboxID))
 		}
-		touchSession(rec.SandboxID)
-		return printJSON(map[string]any{"session_id": rec.SessionID, "sandbox_id": rec.SandboxID, "kept_alive": true})
+		updated, _ := refreshSessionFromAPI(context.Background(), client, rec)
+		return printJSON(map[string]any{"session_id": updated.SessionID, "sandbox_id": updated.SandboxID, "kept_alive": true, "session": updated})
 	case "destroy":
 		if len(args) < 2 {
 			return fail(errors.New("usage: xgen session destroy <session-id> --json"))
@@ -444,11 +493,18 @@ func runSession(client *apiClient, args []string) int {
 		_ = deleteSession(rec.SessionID)
 		return printJSON(map[string]any{"session_id": rec.SessionID, "sandbox_id": rec.SandboxID, "destroyed": true})
 	case "gc":
-		removed, err := gcSessions()
+		fs := flag.NewFlagSet("session gc", flag.ContinueOnError)
+		fs.SetOutput(io.Discard)
+		destroy := fs.Bool("destroy", true, "destroy expired/idle tracked sandboxes")
+		_ = fs.Bool("json", true, "emit JSON")
+		if err := fs.Parse(args[1:]); err != nil {
+			return fail(err)
+		}
+		result, err := gcSessions(context.Background(), client, currentSessionPolicy(), *destroy)
 		if err != nil {
 			return fail(err)
 		}
-		return printJSON(map[string]any{"removed": removed})
+		return printJSON(result)
 	default:
 		return fail(fmt.Errorf("unknown session command: %s", args[0]))
 	}
@@ -806,27 +862,110 @@ func touchSession(sandboxID string) {
 	}
 }
 
-func gcSessions() ([]sessionRecord, error) {
-	records, err := loadSessions()
-	if err != nil {
-		return nil, err
+func autoKeepaliveSession(ctx context.Context, client *apiClient, sandboxID string) error {
+	rec, ok, err := getSession(sandboxID)
+	if err != nil || !ok {
+		return err
 	}
+	policy := currentSessionPolicy()
 	now := time.Now().UnixMilli()
-	var kept []sessionRecord
-	var removed []sessionRecord
-	for _, rec := range records {
-		if rec.ExpiresAtMs > 0 && rec.ExpiresAtMs <= now {
-			removed = append(removed, rec)
-			continue
-		}
-		kept = append(kept, rec)
+	if sessionIdleExpired(rec, policy, now) {
+		return &apiError{Code: "SESSION_IDLE_EXPIRED", Message: "session exceeded idle TTL; run xgen session gc or create a new sandbox", SandboxID: rec.SandboxID}
 	}
-	return removed, saveSessions(kept)
+	if sessionNeedsKeepalive(rec, policy, now) {
+		if err := client.post(ctx, "/sandboxes/"+url.PathEscape(rec.SandboxID)+"/keepalive", nil, nil); err != nil {
+			return err
+		}
+		_, err = refreshSessionFromAPI(ctx, client, rec)
+		return err
+	}
+	touchSession(sandboxID)
+	return nil
 }
 
-func sessionFromSandbox(info sandboxInfo) sessionRecord {
-	return sessionRecord{
-		SessionID:    "sess_" + randomHex(8),
+func refreshSessionFromAPI(ctx context.Context, client *apiClient, rec sessionRecord) (sessionRecord, error) {
+	var info sandboxInfo
+	if err := client.get(ctx, "/sandboxes/"+url.PathEscape(rec.SandboxID), &info); err != nil {
+		return rec, err
+	}
+	rec.Template = info.Template
+	rec.Ports = keys(info.PreviewURLs)
+	rec.Capabilities = info.Capabilities
+	rec.CreatedAtMs = info.CreatedAtMs
+	rec.ExpiresAtMs = info.ExpiresAtMs
+	rec.LastUsedAtMs = time.Now().UnixMilli()
+	if info.Metadata != nil {
+		rec.Metadata = info.Metadata
+		if cwd := info.Metadata["xgen_cwd"]; cwd != "" {
+			rec.Cwd = cwd
+		}
+	}
+	_ = upsertSession(rec)
+	return rec, nil
+}
+
+func currentSessionPolicy() sessionPolicy {
+	return sessionPolicy{
+		IdleTTLMS:        envInt64("XGEN_SESSION_IDLE_TTL_MS", defaultSessionIdleTTLMS),
+		KeepaliveAfterMS: envInt64("XGEN_SESSION_KEEPALIVE_AFTER_MS", defaultSessionKeepaliveAfterMS),
+	}
+}
+
+func sessionIdleExpired(rec sessionRecord, policy sessionPolicy, now int64) bool {
+	return policy.IdleTTLMS > 0 && rec.LastUsedAtMs > 0 && now-rec.LastUsedAtMs > policy.IdleTTLMS
+}
+
+func sessionNeedsKeepalive(rec sessionRecord, policy sessionPolicy, now int64) bool {
+	return rec.ExpiresAtMs > 0 && policy.KeepaliveAfterMS >= 0 && rec.ExpiresAtMs-now <= policy.KeepaliveAfterMS
+}
+
+func gcSessions(ctx context.Context, client *apiClient, policy sessionPolicy, destroy bool) (gcResult, error) {
+	records, err := loadSessions()
+	if err != nil {
+		return gcResult{}, err
+	}
+	now := time.Now().UnixMilli()
+	result := gcResult{}
+	var kept []sessionRecord
+	for _, rec := range records {
+		expired := rec.ExpiresAtMs > 0 && rec.ExpiresAtMs <= now
+		idle := sessionIdleExpired(rec, policy, now)
+		if expired || idle {
+			if destroy {
+				if err := client.delete(ctx, "/sandboxes/"+url.PathEscape(rec.SandboxID)); err != nil && !isSandboxNotFound(err) {
+					result.Errors = append(result.Errors, errorPayload(err, rec.SandboxID))
+					kept = append(kept, rec)
+					result.Kept = append(result.Kept, rec)
+					continue
+				} else {
+					result.Destroyed = append(result.Destroyed, rec)
+				}
+			}
+			result.Removed = append(result.Removed, rec)
+			continue
+		}
+		updated, err := refreshSessionFromAPI(ctx, client, rec)
+		if err != nil {
+			if isSandboxNotFound(err) {
+				result.Removed = append(result.Removed, rec)
+				continue
+			}
+			result.Errors = append(result.Errors, errorPayload(err, rec.SandboxID))
+			kept = append(kept, rec)
+			continue
+		}
+		kept = append(kept, updated)
+		result.Kept = append(result.Kept, updated)
+	}
+	if err := saveSessions(kept); err != nil {
+		return result, err
+	}
+	return result, nil
+}
+
+func sessionFromSandbox(sessionID string, info sandboxInfo) sessionRecord {
+	rec := sessionRecord{
+		SessionID:    sessionID,
 		SandboxID:    info.ID,
 		Template:     info.Template,
 		Ports:        keys(info.PreviewURLs),
@@ -836,6 +975,10 @@ func sessionFromSandbox(info sandboxInfo) sessionRecord {
 		LastUsedAtMs: time.Now().UnixMilli(),
 		Metadata:     info.Metadata,
 	}
+	if info.Metadata != nil {
+		rec.Cwd = info.Metadata["xgen_cwd"]
+	}
+	return rec
 }
 
 func randomHex(n int) string {
@@ -889,11 +1032,43 @@ func withSandbox(err error, sandboxID string) error {
 	return err
 }
 
+func isSandboxNotFound(err error) bool {
+	var apiErr *apiError
+	if !errors.As(err, &apiErr) {
+		return false
+	}
+	return apiErr.Status == http.StatusNotFound || apiErr.Code == "SANDBOX_NOT_FOUND"
+}
+
+func errorPayload(err error, sandboxID string) apiError {
+	var apiErr *apiError
+	if errors.As(err, &apiErr) {
+		out := *apiErr
+		if out.SandboxID == "" {
+			out.SandboxID = sandboxID
+		}
+		return out
+	}
+	return apiError{Code: "ERROR", Message: err.Error(), SandboxID: sandboxID}
+}
+
 func envOr(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v
 	}
 	return fallback
+}
+
+func envInt64(key string, fallback int64) int64 {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	if err != nil {
+		return fallback
+	}
+	return n
 }
 
 func fail(err error) int {

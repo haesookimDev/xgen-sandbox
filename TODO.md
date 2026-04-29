@@ -81,7 +81,7 @@
     - 기본은 machine-readable JSON/JSONL.
     - 실패 시 `code`, `message`, `retryable`, `details`, `sandbox_id`, `command_id`를 포함한다.
 
-- [ ] P1-03 로컬 session registry를 만든다.
+- [x] P1-03 로컬 session registry를 만든다.
   - 저장 필드:
     - `session_id`, `sandbox_id`, `template`, `cwd`, `ports`, `capabilities`, `created_at_ms`, `expires_at_ms`, `last_used_at_ms`, `metadata`.
   - 자동 keepalive와 idle TTL 정책을 CLI/SDK에서 공유한다.
