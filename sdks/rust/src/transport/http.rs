@@ -290,6 +290,10 @@ impl HttpTransport {
             } else {
                 None
             },
+            max_output_bytes: options.max_output_bytes,
+            max_stdout_bytes: options.max_stdout_bytes,
+            max_stderr_bytes: options.max_stderr_bytes,
+            artifact_path: options.artifact_path.clone(),
         };
 
         let resp = self
@@ -319,6 +323,11 @@ impl HttpTransport {
             exit_code: api_result.exit_code,
             stdout: api_result.stdout,
             stderr: api_result.stderr,
+            truncated: api_result.truncated,
+            stdout_truncated: api_result.stdout_truncated,
+            stderr_truncated: api_result.stderr_truncated,
+            truncation_marker: api_result.truncation_marker,
+            artifact_path: api_result.artifact_path,
         })
     }
 

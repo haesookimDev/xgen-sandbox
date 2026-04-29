@@ -74,6 +74,14 @@ class ExecOptions:
     """Working directory. Defaults to ``/home/sandbox/workspace``."""
     timeout: int | None = None
     """Timeout in seconds. Defaults to 30."""
+    max_output_bytes: int | None = None
+    """Maximum combined stdout/stderr bytes to return."""
+    max_stdout_bytes: int | None = None
+    """Maximum stdout bytes to return."""
+    max_stderr_bytes: int | None = None
+    """Maximum stderr bytes to return."""
+    artifact_path: str | None = None
+    """Workspace path for full output artifact when truncated."""
 
 
 @dataclass
@@ -86,6 +94,16 @@ class ExecResult:
     """Captured standard output."""
     stderr: str
     """Captured standard error."""
+    truncated: bool = False
+    """True when stdout or stderr was truncated."""
+    stdout_truncated: bool = False
+    """True when stdout was truncated."""
+    stderr_truncated: bool = False
+    """True when stderr was truncated."""
+    truncation_marker: str | None = None
+    """Marker appended to truncated streams."""
+    artifact_path: str | None = None
+    """Workspace path containing full output when available."""
 
 
 @dataclass

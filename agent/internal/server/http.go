@@ -470,13 +470,18 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 		timeout = time.Duration(req.Timeout) * time.Second
 	}
 
-	result, err := s.wsProxy.ExecSync(r.Context(), id, req.Command, req.Args, req.Env, req.Cwd, timeout)
+	result, err := s.wsProxy.ExecSyncWithOptions(r.Context(), id, req.Command, req.Args, req.Env, req.Cwd, timeout, proxy.ExecOptions{
+		MaxOutputBytes: req.MaxOutputBytes,
+		MaxStdoutBytes: req.MaxStdoutBytes,
+		MaxStderrBytes: req.MaxStderrBytes,
+		ArtifactPath:   req.ArtifactPath,
+	})
 	if err != nil {
 		code := v2.CodeInternal
 		msg := err.Error()
 		low := strings.ToLower(msg)
 		switch {
-		case strings.Contains(low, "timeout"), strings.Contains(low, "deadline"):
+		case strings.Contains(low, "timeout"), strings.Contains(low, "deadline"), strings.Contains(low, "canceled"), strings.Contains(low, "cancelled"):
 			code = v2.CodeExecTimeout
 		case strings.Contains(low, "ws connect"), strings.Contains(low, "sidecar"), strings.Contains(low, "connection"):
 			code = v2.CodeSidecarUnreachable
@@ -486,9 +491,14 @@ func (s *Server) handleExec(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, v1.ExecResponse{
-		ExitCode: result.ExitCode,
-		Stdout:   result.Stdout,
-		Stderr:   result.Stderr,
+		ExitCode:         result.ExitCode,
+		Stdout:           result.Stdout,
+		Stderr:           result.Stderr,
+		Truncated:        result.Truncated,
+		StdoutTruncated:  result.StdoutTruncated,
+		StderrTruncated:  result.StderrTruncated,
+		TruncationMarker: result.TruncationMarker,
+		ArtifactPath:     result.ArtifactPath,
 	})
 }
 

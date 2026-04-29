@@ -205,3 +205,57 @@ func TestHandleClientWSRejectsNotReadySandboxWithoutDialingSidecar(t *testing.T)
 		t.Fatalf("sidecar dials = %d, want 0", got)
 	}
 }
+
+func TestExecCaptureTruncatesOutput(t *testing.T) {
+	capture := newExecCapture(ExecOptions{MaxStdoutBytes: 5, MaxStderrBytes: 3})
+	capture.writeStdout([]byte("hello world"))
+	capture.writeStderr([]byte("abcdef"))
+
+	result := &ExecResult{}
+	capture.apply(result)
+
+	if !result.Truncated || !result.StdoutTruncated || !result.StderrTruncated {
+		t.Fatalf("expected truncation flags, got %#v", result)
+	}
+	if result.Stdout != "hello"+truncationMarker {
+		t.Fatalf("stdout = %q", result.Stdout)
+	}
+	if result.Stderr != "abc"+truncationMarker {
+		t.Fatalf("stderr = %q", result.Stderr)
+	}
+}
+
+func TestExecCaptureKeepsUnboundedOutput(t *testing.T) {
+	capture := newExecCapture(ExecOptions{})
+	capture.writeStdout([]byte("hello"))
+	capture.writeStderr([]byte("world"))
+
+	result := &ExecResult{}
+	capture.apply(result)
+
+	if result.Truncated || result.TruncationMarker != "" {
+		t.Fatalf("unexpected truncation: %#v", result)
+	}
+	if result.Stdout != "hello" || result.Stderr != "world" {
+		t.Fatalf("unexpected output: %#v", result)
+	}
+}
+
+func TestExecCaptureMaxOutputBytesIsCombined(t *testing.T) {
+	capture := newExecCapture(ExecOptions{MaxOutputBytes: 8})
+	capture.writeStdout([]byte("hello"))
+	capture.writeStderr([]byte("world"))
+
+	result := &ExecResult{}
+	capture.apply(result)
+
+	if !result.Truncated || result.StdoutTruncated || !result.StderrTruncated {
+		t.Fatalf("unexpected truncation flags: %#v", result)
+	}
+	if result.Stdout != "hello" {
+		t.Fatalf("stdout = %q", result.Stdout)
+	}
+	if result.Stderr != "wor"+truncationMarker {
+		t.Fatalf("stderr = %q", result.Stderr)
+	}
+}

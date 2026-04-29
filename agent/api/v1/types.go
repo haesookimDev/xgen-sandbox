@@ -22,10 +22,10 @@ type ResourceSpec struct {
 
 // CreateSandboxRequest is the request body for POST /api/v1/sandboxes.
 type CreateSandboxRequest struct {
-	Template  string            `json:"template"`
-	Timeout   int               `json:"timeout_seconds,omitempty"`
-	Resources *ResourceSpec     `json:"resources,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
+	Template     string            `json:"template"`
+	Timeout      int               `json:"timeout_seconds,omitempty"`
+	Resources    *ResourceSpec     `json:"resources,omitempty"`
+	Env          map[string]string `json:"env,omitempty"`
 	Ports        []int             `json:"ports,omitempty"`
 	GUI          bool              `json:"gui,omitempty"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
@@ -34,12 +34,12 @@ type CreateSandboxRequest struct {
 
 // SandboxResponse is the response body for sandbox operations.
 type SandboxResponse struct {
-	ID          string            `json:"id"`
-	Status      SandboxStatus     `json:"status"`
-	Template    string            `json:"template"`
-	WsURL       string            `json:"ws_url"`
-	PreviewURLs map[int]string    `json:"preview_urls,omitempty"`
-	VncURL      *string           `json:"vnc_url,omitempty"`
+	ID           string            `json:"id"`
+	Status       SandboxStatus     `json:"status"`
+	Template     string            `json:"template"`
+	WsURL        string            `json:"ws_url"`
+	PreviewURLs  map[int]string    `json:"preview_urls,omitempty"`
+	VncURL       *string           `json:"vnc_url,omitempty"`
 	CreatedAt    time.Time         `json:"created_at"`
 	ExpiresAt    time.Time         `json:"expires_at"`
 	Metadata     map[string]string `json:"metadata,omitempty"`
@@ -48,18 +48,27 @@ type SandboxResponse struct {
 
 // ExecRequest is the request body for POST /api/v1/sandboxes/:id/exec.
 type ExecRequest struct {
-	Command string            `json:"command"`
-	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
-	Cwd     string            `json:"cwd,omitempty"`
-	Timeout int               `json:"timeout_seconds,omitempty"`
+	Command        string            `json:"command"`
+	Args           []string          `json:"args,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Cwd            string            `json:"cwd,omitempty"`
+	Timeout        int               `json:"timeout_seconds,omitempty"`
+	MaxOutputBytes int               `json:"max_output_bytes,omitempty"`
+	MaxStdoutBytes int               `json:"max_stdout_bytes,omitempty"`
+	MaxStderrBytes int               `json:"max_stderr_bytes,omitempty"`
+	ArtifactPath   string            `json:"artifact_path,omitempty"`
 }
 
 // ExecResponse is the response body for exec operations.
 type ExecResponse struct {
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
+	ExitCode         int     `json:"exit_code"`
+	Stdout           string  `json:"stdout"`
+	Stderr           string  `json:"stderr"`
+	Truncated        bool    `json:"truncated"`
+	StdoutTruncated  bool    `json:"stdout_truncated,omitempty"`
+	StderrTruncated  bool    `json:"stderr_truncated,omitempty"`
+	TruncationMarker string  `json:"truncation_marker,omitempty"`
+	ArtifactPath     *string `json:"artifact_path,omitempty"`
 }
 
 // ErrorResponse is a generic error response.
@@ -84,10 +93,10 @@ type AuthTokenResponse struct {
 
 // AdminSummaryResponse is the response body for GET /api/v1/admin/summary.
 type AdminSummaryResponse struct {
-	ActiveSandboxes     int                    `json:"active_sandboxes"`
+	ActiveSandboxes     int                     `json:"active_sandboxes"`
 	WarmPool            map[string]WarmPoolInfo `json:"warm_pool"`
-	SandboxesByStatus   map[string]int         `json:"sandboxes_by_status"`
-	SandboxesByTemplate map[string]int         `json:"sandboxes_by_template"`
+	SandboxesByStatus   map[string]int          `json:"sandboxes_by_status"`
+	SandboxesByTemplate map[string]int          `json:"sandboxes_by_template"`
 }
 
 // WarmPoolInfo represents the state of a warm pool for a template.

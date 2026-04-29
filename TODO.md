@@ -87,7 +87,7 @@
   - 자동 keepalive와 idle TTL 정책을 CLI/SDK에서 공유한다.
   - `xgen session gc`가 만료/고아 sandbox를 정리한다.
 
-- [ ] P1-04 LLM-safe exec API를 SDK에 추가한다.
+- [x] P1-04 LLM-safe exec API를 SDK에 추가한다.
   - `max_output_bytes`, `max_stdout_bytes`, `max_stderr_bytes`를 지원한다.
   - truncation marker와 `truncated: true`를 응답에 포함한다.
   - 큰 출력은 workspace artifact path로 저장하고 preview/read 링크를 반환한다.

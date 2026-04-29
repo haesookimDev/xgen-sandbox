@@ -78,6 +78,14 @@ export interface ExecOptions {
   cwd?: string;
   /** Timeout in milliseconds. Defaults to 30000. */
   timeout?: number;
+  /** Maximum combined stdout/stderr bytes to return. */
+  maxOutputBytes?: number;
+  /** Maximum stdout bytes to return. */
+  maxStdoutBytes?: number;
+  /** Maximum stderr bytes to return. */
+  maxStderrBytes?: number;
+  /** Workspace path for full output artifact when supported by REST exec. */
+  artifactPath?: string;
 }
 
 /** Result of a synchronous command execution. */
@@ -88,6 +96,16 @@ export interface ExecResult {
   stdout: string;
   /** Captured standard error. */
   stderr: string;
+  /** True when stdout or stderr was truncated. */
+  truncated?: boolean;
+  /** True when stdout was truncated. */
+  stdoutTruncated?: boolean;
+  /** True when stderr was truncated. */
+  stderrTruncated?: boolean;
+  /** Marker appended to truncated streams. */
+  truncationMarker?: string;
+  /** Workspace path containing full output when available. */
+  artifactPath?: string;
 }
 
 /** A streaming event emitted during command execution. */

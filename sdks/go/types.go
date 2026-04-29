@@ -68,10 +68,14 @@ func (e *APIError) Error() string {
 type ExecOption func(*execConfig)
 
 type execConfig struct {
-	Args    []string
-	Env     map[string]string
-	Cwd     string
-	Timeout int // seconds
+	Args           []string
+	Env            map[string]string
+	Cwd            string
+	Timeout        int // seconds
+	MaxOutputBytes int
+	MaxStdoutBytes int
+	MaxStderrBytes int
+	ArtifactPath   string
 }
 
 // WithArgs sets additional arguments for the command.
@@ -94,11 +98,32 @@ func WithTimeout(seconds int) ExecOption {
 	return func(c *execConfig) { c.Timeout = seconds }
 }
 
+func WithMaxOutputBytes(n int) ExecOption {
+	return func(c *execConfig) { c.MaxOutputBytes = n }
+}
+
+func WithMaxStdoutBytes(n int) ExecOption {
+	return func(c *execConfig) { c.MaxStdoutBytes = n }
+}
+
+func WithMaxStderrBytes(n int) ExecOption {
+	return func(c *execConfig) { c.MaxStderrBytes = n }
+}
+
+func WithExecArtifactPath(path string) ExecOption {
+	return func(c *execConfig) { c.ArtifactPath = path }
+}
+
 // ExecResult holds the result of a command execution.
 type ExecResult struct {
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
+	ExitCode         int     `json:"exit_code"`
+	Stdout           string  `json:"stdout"`
+	Stderr           string  `json:"stderr"`
+	Truncated        bool    `json:"truncated"`
+	StdoutTruncated  bool    `json:"stdout_truncated,omitempty"`
+	StderrTruncated  bool    `json:"stderr_truncated,omitempty"`
+	TruncationMarker string  `json:"truncation_marker,omitempty"`
+	ArtifactPath     *string `json:"artifact_path,omitempty"`
 }
 
 // FileInfo holds metadata about a file or directory.
@@ -153,4 +178,8 @@ type execRequest struct {
 	Cwd            string            `json:"cwd,omitempty"`
 	TimeoutSeconds int               `json:"timeout_seconds,omitempty"`
 	TimeoutMs      int64             `json:"timeout_ms,omitempty"`
+	MaxOutputBytes int               `json:"max_output_bytes,omitempty"`
+	MaxStdoutBytes int               `json:"max_stdout_bytes,omitempty"`
+	MaxStderrBytes int               `json:"max_stderr_bytes,omitempty"`
+	ArtifactPath   string            `json:"artifact_path,omitempty"`
 }

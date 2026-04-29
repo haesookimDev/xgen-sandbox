@@ -82,10 +82,14 @@ func (s *Sandbox) Exec(ctx context.Context, command string, opts ...ExecOption) 
 	args := append(parts[1:], cfg.Args...)
 
 	body := execRequest{
-		Command: parts[0],
-		Args:    args,
-		Env:     cfg.Env,
-		Cwd:     cfg.Cwd,
+		Command:        parts[0],
+		Args:           args,
+		Env:            cfg.Env,
+		Cwd:            cfg.Cwd,
+		MaxOutputBytes: cfg.MaxOutputBytes,
+		MaxStdoutBytes: cfg.MaxStdoutBytes,
+		MaxStderrBytes: cfg.MaxStderrBytes,
+		ArtifactPath:   cfg.ArtifactPath,
 	}
 	if s.httpT.APIVersion() == "v2" {
 		body.TimeoutMs = int64(cfg.Timeout) * 1000

@@ -84,6 +84,10 @@ class Sandbox:
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         timeout: int | None = None,
+        max_output_bytes: int | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        artifact_path: str | None = None,
     ) -> ExecResult:
         """Execute a command synchronously and return the result.
 
@@ -109,6 +113,10 @@ class Sandbox:
             env=env,
             cwd=cwd,
             timeout_seconds=timeout,
+            max_output_bytes=max_output_bytes,
+            max_stdout_bytes=max_stdout_bytes,
+            max_stderr_bytes=max_stderr_bytes,
+            artifact_path=artifact_path,
         )
 
     # -- Exec Stream (WebSocket) --

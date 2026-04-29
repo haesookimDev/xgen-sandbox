@@ -78,6 +78,16 @@ export class Sandbox {
 
     let stdout = "";
     let stderr = "";
+    let stdoutTruncated = false;
+    let stderrTruncated = false;
+    const marker = "\n...[truncated]\n";
+    const appendLimited = (current: string, next: string, limit?: number): [string, boolean] => {
+      if (!limit || limit <= 0) return [current + next, false];
+      if (current.length >= limit) return [current, true];
+      const remaining = limit - current.length;
+      if (next.length <= remaining) return [current + next, false];
+      return [current + next.slice(0, remaining) + marker, true];
+    };
 
     return new Promise<ExecResult>((resolve, reject) => {
       const timeout = options?.timeout ?? 30_000;
@@ -90,13 +100,19 @@ export class Sandbox {
 
       const cleanupStdout = ws.on(MsgType.ExecStdout, (env) => {
         if (env.channel === channel) {
-          stdout += new TextDecoder().decode(env.payload);
+          const limit = options?.maxStdoutBytes ?? options?.maxOutputBytes;
+          const [next, truncated] = appendLimited(stdout, new TextDecoder().decode(env.payload), limit);
+          stdout = next;
+          stdoutTruncated ||= truncated;
         }
       });
 
       const cleanupStderr = ws.on(MsgType.ExecStderr, (env) => {
         if (env.channel === channel) {
-          stderr += new TextDecoder().decode(env.payload);
+          const limit = options?.maxStderrBytes ?? options?.maxOutputBytes;
+          const [next, truncated] = appendLimited(stderr, new TextDecoder().decode(env.payload), limit);
+          stderr = next;
+          stderrTruncated ||= truncated;
         }
       });
 
@@ -112,6 +128,10 @@ export class Sandbox {
             exitCode: result.exit_code,
             stdout,
             stderr,
+            truncated: stdoutTruncated || stderrTruncated,
+            stdoutTruncated,
+            stderrTruncated,
+            truncationMarker: stdoutTruncated || stderrTruncated ? marker : undefined,
           });
         }
       });

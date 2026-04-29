@@ -58,18 +58,27 @@ type SandboxResponse struct {
 
 // ExecRequest is the request body for POST /api/v2/sandboxes/:id/exec.
 type ExecRequest struct {
-	Command   string            `json:"command"`
-	Args      []string          `json:"args,omitempty"`
-	Env       map[string]string `json:"env,omitempty"`
-	Cwd       string            `json:"cwd,omitempty"`
-	TimeoutMs int64             `json:"timeout_ms,omitempty"`
+	Command        string            `json:"command"`
+	Args           []string          `json:"args,omitempty"`
+	Env            map[string]string `json:"env,omitempty"`
+	Cwd            string            `json:"cwd,omitempty"`
+	TimeoutMs      int64             `json:"timeout_ms,omitempty"`
+	MaxOutputBytes int               `json:"max_output_bytes,omitempty"`
+	MaxStdoutBytes int               `json:"max_stdout_bytes,omitempty"`
+	MaxStderrBytes int               `json:"max_stderr_bytes,omitempty"`
+	ArtifactPath   string            `json:"artifact_path,omitempty"`
 }
 
 // ExecResponse is the response body for exec operations in v2.
 type ExecResponse struct {
-	ExitCode int    `json:"exit_code"`
-	Stdout   string `json:"stdout"`
-	Stderr   string `json:"stderr"`
+	ExitCode         int     `json:"exit_code"`
+	Stdout           string  `json:"stdout"`
+	Stderr           string  `json:"stderr"`
+	Truncated        bool    `json:"truncated"`
+	StdoutTruncated  bool    `json:"stdout_truncated,omitempty"`
+	StderrTruncated  bool    `json:"stderr_truncated,omitempty"`
+	TruncationMarker string  `json:"truncation_marker,omitempty"`
+	ArtifactPath     *string `json:"artifact_path,omitempty"`
 }
 
 // AuthTokenRequest is the request body for POST /api/v2/auth/token.

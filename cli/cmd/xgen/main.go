@@ -275,6 +275,9 @@ func runExec(client *apiClient, args []string) int {
 	_ = fs.Bool("jsonl", false, "emit JSON lines")
 	timeoutMs := fs.Int64("timeout-ms", 30000, "timeout in milliseconds")
 	maxOutput := fs.Int("max-output-bytes", 0, "truncate combined output to this many bytes")
+	maxStdout := fs.Int("max-stdout-bytes", 0, "truncate stdout to this many bytes")
+	maxStderr := fs.Int("max-stderr-bytes", 0, "truncate stderr to this many bytes")
+	artifactPath := fs.String("artifact-path", "", "workspace path for full output artifact")
 	if err := fs.Parse(args[1:]); err != nil {
 		return fail(err)
 	}
@@ -301,10 +304,27 @@ func runExec(client *apiClient, args []string) int {
 	if *timeoutMs > 0 {
 		body["timeout_ms"] = *timeoutMs
 	}
+	if *maxOutput > 0 {
+		body["max_output_bytes"] = *maxOutput
+	}
+	if *maxStdout > 0 {
+		body["max_stdout_bytes"] = *maxStdout
+	}
+	if *maxStderr > 0 {
+		body["max_stderr_bytes"] = *maxStderr
+	}
+	if *artifactPath != "" {
+		body["artifact_path"] = *artifactPath
+	}
 	var out struct {
-		ExitCode int    `json:"exit_code"`
-		Stdout   string `json:"stdout"`
-		Stderr   string `json:"stderr"`
+		ExitCode         int     `json:"exit_code"`
+		Stdout           string  `json:"stdout"`
+		Stderr           string  `json:"stderr"`
+		Truncated        bool    `json:"truncated"`
+		StdoutTruncated  bool    `json:"stdout_truncated"`
+		StderrTruncated  bool    `json:"stderr_truncated"`
+		TruncationMarker string  `json:"truncation_marker"`
+		ArtifactPath     *string `json:"artifact_path"`
 	}
 	if err := client.post(context.Background(), "/sandboxes/"+url.PathEscape(sandboxID)+"/exec", body, &out); err != nil {
 		return fail(withSandbox(err, sandboxID))
@@ -315,11 +335,15 @@ func runExec(client *apiClient, args []string) int {
 	}
 	touchSession(sandboxID)
 	return printJSON(map[string]any{
-		"sandbox_id": sandboxID,
-		"exit_code":  out.ExitCode,
-		"stdout":     out.Stdout,
-		"stderr":     out.Stderr,
-		"truncated":  truncated,
+		"sandbox_id":        sandboxID,
+		"exit_code":         out.ExitCode,
+		"stdout":            out.Stdout,
+		"stderr":            out.Stderr,
+		"truncated":         out.Truncated || truncated,
+		"stdout_truncated":  out.StdoutTruncated,
+		"stderr_truncated":  out.StderrTruncated,
+		"truncation_marker": out.TruncationMarker,
+		"artifact_path":     out.ArtifactPath,
 	})
 }
 

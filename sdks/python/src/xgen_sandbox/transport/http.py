@@ -176,6 +176,10 @@ class HttpTransport:
         env: dict[str, str] | None = None,
         cwd: str | None = None,
         timeout_seconds: int | None = None,
+        max_output_bytes: int | None = None,
+        max_stdout_bytes: int | None = None,
+        max_stderr_bytes: int | None = None,
+        artifact_path: str | None = None,
     ) -> ExecResult:
         body: dict = {"command": "sh", "args": ["-c", command, *(args or [])]}
         if env is not None:
@@ -187,6 +191,14 @@ class HttpTransport:
                 body["timeout_ms"] = timeout_seconds * 1000
             else:
                 body["timeout_seconds"] = timeout_seconds
+        if max_output_bytes is not None:
+            body["max_output_bytes"] = max_output_bytes
+        if max_stdout_bytes is not None:
+            body["max_stdout_bytes"] = max_stdout_bytes
+        if max_stderr_bytes is not None:
+            body["max_stderr_bytes"] = max_stderr_bytes
+        if artifact_path is not None:
+            body["artifact_path"] = artifact_path
 
         resp = await self._client.post(
             f"{self._base_url}{self._path(f'/sandboxes/{sandbox_id}/exec')}",
@@ -201,6 +213,11 @@ class HttpTransport:
             exit_code=data["exit_code"],
             stdout=data.get("stdout", ""),
             stderr=data.get("stderr", ""),
+            truncated=data.get("truncated", False),
+            stdout_truncated=data.get("stdout_truncated", False),
+            stderr_truncated=data.get("stderr_truncated", False),
+            truncation_marker=data.get("truncation_marker"),
+            artifact_path=data.get("artifact_path"),
         )
 
     def get_ws_url(self, sandbox_id: str) -> str:

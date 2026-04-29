@@ -78,6 +78,10 @@ pub struct ExecOptions {
     pub env: Option<HashMap<String, String>>,
     pub cwd: Option<String>,
     pub timeout: Option<u64>,
+    pub max_output_bytes: Option<u64>,
+    pub max_stdout_bytes: Option<u64>,
+    pub max_stderr_bytes: Option<u64>,
+    pub artifact_path: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -85,6 +89,11 @@ pub struct ExecResult {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    pub truncated: bool,
+    pub stdout_truncated: bool,
+    pub stderr_truncated: bool,
+    pub truncation_marker: Option<String>,
+    pub artifact_path: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -122,6 +131,14 @@ pub(crate) struct ExecApiResponse {
     pub exit_code: i32,
     pub stdout: String,
     pub stderr: String,
+    #[serde(default)]
+    pub truncated: bool,
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
+    pub truncation_marker: Option<String>,
+    pub artifact_path: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -137,4 +154,12 @@ pub(crate) struct ExecApiRequest {
     pub timeout_seconds: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timeout_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_output_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_stdout_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_stderr_bytes: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub artifact_path: Option<String>,
 }
